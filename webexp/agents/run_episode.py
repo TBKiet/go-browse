@@ -9,7 +9,7 @@ import sys
 class RunEpisodeConfig:
     """
     Configuration for running an agent for an episode.
-    
+
     Attributes:
         agent_factory_args (dict): Arguments for the agent factory.
         env_args (dict): Arguments for the environment.
@@ -29,7 +29,7 @@ class BrowserGymAgentArgsWrapper(AbstractAgentArgs):
         return AgentFactory.create_agent(**self.agent_factory_args)
 
 def main():
-    
+
     # Need to get config file from command line
     parser = argparse.ArgumentParser(description="Run an episode with a browser gym agent.")
     parser.add_argument(

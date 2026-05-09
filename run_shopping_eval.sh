@@ -10,13 +10,24 @@
 #   https://setting-legibly-implicate.ngrok-free.dev/
 # =============================================================================
 
-set -e
+# NOTE: Do NOT use 'set -e' — run_episode.py exits with code 1 when task fails
+# (reward=0), which is normal and expected. We check the actual reward from the
+# log file instead of relying on exit codes for pass/fail.
 
 # Auto-set WA_SHOPPING if not already defined
 if [ -z "$WA_SHOPPING" ]; then
     export WA_SHOPPING="https://setting-legibly-implicate.ngrok-free.dev"
     echo "WA_SHOPPING auto-set to: $WA_SHOPPING"
 fi
+
+# BrowserGym requires ALL WebArena env vars to exist, even if we only run Shopping.
+# Set dummy URLs for domains we don't use.
+export WA_SHOPPING_ADMIN="${WA_SHOPPING_ADMIN:-http://localhost:7780}"
+export WA_REDDIT="${WA_REDDIT:-http://localhost:7781}"
+export WA_GITLAB="${WA_GITLAB:-http://localhost:7782}"
+export WA_WIKIPEDIA="${WA_WIKIPEDIA:-http://localhost:7783}"
+export WA_MAP="${WA_MAP:-http://localhost:7784}"
+export WA_HOMEPAGE="${WA_HOMEPAGE:-http://localhost:7785}"
 
 CONFIG_FILE="${1:?Usage: $0 <config.yaml>}"
 MODEL_NAME=$(python3 -c "from omegaconf import OmegaConf; print(OmegaConf.load('$CONFIG_FILE').agent_factory_args.model_id)")
@@ -35,6 +46,10 @@ print(' '.join(str(i) for i in ids))
 
 TOTAL=$(echo "$SHOPPING_IDS" | wc -w | tr -d ' ')
 echo "Total shopping tasks: $TOTAL"
+
+# Ensure output directory exists
+mkdir -p "$EXP_DIR"
+
 echo "========================================"
 
 COUNT=0

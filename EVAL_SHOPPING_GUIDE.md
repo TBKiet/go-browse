@@ -295,3 +295,22 @@ for key, val in record.items():
 4. **192 task × ~1-3 phút/task ≈ 4-10 giờ** cho mỗi model (tùy tốc độ model và network).
 5. **Có thể resume nếu gián đoạn** — script ghi log từng task riêng, task đã chạy sẽ bị skip nếu chạy lại (tùy chỉnh).
 6. **Biến môi trường `WA_SHOPPING`** được script tự động set tới ngrok URL, không cần export thủ công.
+
+run_shopping_eval.sh
+  → Tạo temp config YAML từ benchmark config + env_args
+  → Gọi: python -m webexp.agents.run_episode -c temp_config.yaml
+      → OmegaConf load config → RunEpisodeConfig
+      → BrowserGymAgentArgsWrapper.make_agent() → SolverAgent
+      → ExpArgs.prepare() + ExpArgs.run()
+          → BrowserGym: env.reset() → obs
+          → Loop (max 30 steps):
+              agent.obs_preprocessor(obs)
+              agent.get_action(obs)
+                  → prompt_builder.build_messages(goal, current_step, history, char_limit=80000)
+                  → client.chat.completions.create(model, messages, temperature=0)
+                  → extract_action_and_thought(raw_response)
+              agent.action_processor(raw_action) → Python code
+              env.step(action) → next obs, reward, done
+          → WebArena Evaluator: so sánh kết quả → reward 0/1
+      → In exp_record (reward, steps, etc.)
+  → Bash: kiểm tra exit code → PASS/FAIL
