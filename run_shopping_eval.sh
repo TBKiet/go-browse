@@ -57,12 +57,27 @@ OmegaConf.save(conf, '$TMP_CONFIG')
 "
 
     # Run the episode
-    if python3 -m webexp.agents.run_episode -c "$TMP_CONFIG" > "$EXP_DIR/task_${TID}.log" 2>&1; then
+    python3 -m webexp.agents.run_episode -c "$TMP_CONFIG" > "$EXP_DIR/task_${TID}.log" 2>&1
+    EXIT_CODE=$?
+
+    # Extract actual reward from log (primary check, more reliable than exit code)
+    REWARD=$(grep 'reward:' "$EXP_DIR/task_${TID}.log" | tail -1 | sed 's/.*reward:[[:space:]]*//')
+
+    if [ "$REWARD" = "1.0" ]; then
         SUCCESS=$((SUCCESS + 1))
-        echo "  ✅ PASS"
-    else
+        echo "  ✅ PASS (reward=1.0)"
+    elif [ "$REWARD" = "0.0" ]; then
         FAIL=$((FAIL + 1))
-        echo "  ❌ FAIL (see $EXP_DIR/task_${TID}.log)"
+        echo "  ❌ FAIL (reward=0.0)"
+    else
+        # Fallback: no reward found (crash or unexpected output), use exit code
+        if [ $EXIT_CODE -eq 0 ]; then
+            SUCCESS=$((SUCCESS + 1))
+            echo "  ⚠️  PASS? (exit=0, no reward found — see log)"
+        else
+            FAIL=$((FAIL + 1))
+            echo "  ❌ FAIL (exit=$EXIT_CODE, no reward found)"
+        fi
     fi
 
     rm -f "$TMP_CONFIG"

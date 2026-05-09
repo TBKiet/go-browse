@@ -204,11 +204,15 @@ class SolverAgent(BaseAgent):
         while attempt < max_attempts:
             try:
                 # Build messages with current character limit
+                # On retries, reduce char_limit to avoid context overflow errors.
+                # client_long (base_url_2) may support longer context, so only apply
+                # the reduction when using the primary client on subsequent attempts.
+                effective_char_limit = current_char_limit
                 messages = self.prompt_builder.build_messages(
                     goal=obs["goal_object"][0]["text"],
                     current_step=current_step,
                     history=self.history,
-                    char_limit=current_char_limit if (attempt == 0) or (current_char_limit < 0) else current_char_limit * 2 # TODO: Ad-hoc!
+                    char_limit=effective_char_limit
                 )['prompt']
                 
                 print(f"Attempt {attempt+1}: Using char_limit={current_char_limit}")

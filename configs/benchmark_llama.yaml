@@ -1,0 +1,11 @@
+agent_factory_args:
+  name: SolverAgent
+  model_id: "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
+  base_url: "http://localhost:8000/v1"
+  api_key: "EMPTY"
+  temperature: 0.
+  char_limit: 80000
+
+exp_dir: "./results/llama3.1-70b_shopping"
+n_jobs: 1
+resume_dir: null

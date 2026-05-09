@@ -3,6 +3,7 @@ from browsergym.experiments import AbstractAgentArgs, EnvArgs, ExpArgs, get_exp_
 from dataclasses import dataclass
 from omegaconf import OmegaConf as oc
 import argparse
+import sys
 
 @dataclass
 class RunEpisodeConfig:
@@ -60,6 +61,13 @@ def main():
 
     for key, val in exp_record.items():
         print(f"{key}: {val}")
+
+    # Exit with code based on actual reward: 0 = success (reward > 0), 1 = failure
+    reward = exp_record.get("reward", 0.0)
+    if reward is not None and reward > 0:
+        sys.exit(0)
+    else:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
