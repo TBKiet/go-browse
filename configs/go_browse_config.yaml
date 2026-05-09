@@ -1,0 +1,102 @@
+
+env_args:
+  # For webarena domains, replace the task name with the following per domain:
+  # webarena.exploration.7 (map)
+  # webarena.exploration.44 (gitlab)
+  # webarena.exploration.0 (shopping_admin)
+  # webarena.exploration.66 (reddit)
+  # webarena.exploration.51 (shopping)
+  # To run on any live website, set task_name to "openended" and provide a start_url in task_kwargs.
+  task_name: <PLACEHOLDER>
+  #task_name: openended
+  #task_kwargs:
+  #  start_url: https://www.google.com/maps
+  max_steps: 10000000
+  headless: true
+  viewport:
+    width: 1280
+    height: 1440
+
+evaluator:
+  model_name: gpt-4o-2024-05-13
+
+max_nodes: 20
+resume_from: null # If resuming from a previous, incomplete run, you can specify the specific run directory path here (exp_dir).
+max_feasible_page_explorer_tasks_per_node: 20
+max_feasible_nav_explorer_tasks_per_node: 10
+
+page_explorers:
+  - agent_factory_args:
+      name: "PageExplorerAgent"
+      model_id: "gpt-4o-2024-08-06"
+      base_url: "$<PLACEHOLDER - API URL for OpenAI>"
+      api_key: "$<PLACEHOLDER - OpenAI API key>"
+      temperature: 0.7
+    max_steps: 20
+    retries: 3
+
+  - agent_factory_args:
+      name: "PageExplorerAgent"
+      model_id: "claude-3-7-sonnet-20250219"
+      base_url: "$<PLACEHOLDER - API_URL for Anthropic>"
+      api_key: "$<PLACEHOLDER - Anthropic API key>"
+      temperature: 0.7
+    max_steps: 10
+    retries: 3
+
+nav_explorers:
+  - agent_factory_args:
+      name: "NavExplorerAgent"
+      model_id: "claude-3-7-sonnet-20250219"
+      base_url: "$<PLACEHOLDER - API_URL for Anthropic>"
+      api_key: "$<PLACEHOLDER - Anthropic API key>"
+      temperature: 0.7
+    max_steps: 15
+    retries: 3
+
+feasibility_checkers: 
+  - agent_factory_args:
+        name: "SolverAgent"
+        model_id: "claude-3-7-sonnet-20250219"
+        base_url: "$<PLACEHOLDER - API_URL for Anthropic>"
+        api_key: "$<PLACEHOLDER - Anthropic API key>"
+        temperature: 0.7
+        char_limit: 80000
+    max_steps: 10
+    retries: 3
+
+solvers:
+  - agent_factory_args:
+        name: "SolverAgent"
+        model_id: "gpt-4o-mini-2024-07-18"
+        base_url: "$<PLACEHOLDER - API URL for OpenAI>"
+        api_key: "$<PLACEHOLDER - OpenAI API key>"
+        temperature: 0.7
+        char_limit: 80000
+    max_steps: 10
+    retries: 2
+
+  - agent_factory_args:
+      name: "SolverAgent"
+      model_id: "Qwen/Qwen2.5-7B-Instruct"
+      base_url: "$<PLACEHOLDER - Inference URL (e.g., vllm) for Qwen model>"
+      temperature: 0.7
+      char_limit: 80000
+    max_steps: 10
+    retries: 2
+
+
+allowlist_patterns:
+  - <PLACEHOLDER - BASE URL>/.*
+
+
+denylist_patterns:
+  - ".*/admin/admin/system_config"
+  - ".*/admin/admin/system_config/.*"
+
+exp_dir: <PLACEHOLDER - Path to user-specified experiment directory>
+
+# You can optionally reset the environment after exploration of each node, by setting the full_reset_url here. 
+# To setup the reset url, copy/clone over the webarena-reset folder to your webarena hosting server and run reset_server.py with fastapi.
+# Note the reset scripts that the reset_server.py uses expects that you set the BASE_URL env var on the server to the public base url of the server.
+full_reset_url: null

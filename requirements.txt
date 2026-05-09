@@ -1,0 +1,16 @@
+torch
+accelerate
+agentlab
+browsergym
+evaluate
+kaleido
+scikit-learn
+bitsandbytes
+deepspeed
+liger-kernel
+omegaconf
+pillow
+plotly
+transformers
+trl
+wandb
