@@ -29,6 +29,17 @@ export WA_WIKIPEDIA="${WA_WIKIPEDIA:-http://localhost:7783}"
 export WA_MAP="${WA_MAP:-http://localhost:7784}"
 export WA_HOMEPAGE="${WA_HOMEPAGE:-http://localhost:7785}"
 
+# WebArena evaluator uses its own OpenAI client internally for llm_ua_match
+# (LLM-based answer matching). Set these to point to your local vLLM server
+# so the evaluator can score tasks that require open-ended answer comparison.
+export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}"
+export OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://localhost:8000/v1}"
+
+# Model used by the WebArena evaluator for fuzzy answer matching (llm_fuzzy_match).
+# Must be a model available at OPENAI_BASE_URL. Defaults to gpt-4.1-mini when
+# hitting OpenAI directly; set to a vLLM-served model if using local endpoint.
+export WEBARENA_EVAL_MODEL="${WEBARENA_EVAL_MODEL:-gpt-4.1-mini}"
+
 CONFIG_FILE="${1:?Usage: $0 <config.yaml>}"
 MODEL_NAME=$(python3 -c "from omegaconf import OmegaConf; print(OmegaConf.load('$CONFIG_FILE').agent_factory_args.model_id)")
 EXP_DIR=$(python3 -c "from omegaconf import OmegaConf; print(OmegaConf.load('$CONFIG_FILE').exp_dir)")

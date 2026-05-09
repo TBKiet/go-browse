@@ -63,7 +63,8 @@ def main():
         print(f"{key}: {val}")
 
     # Exit with code based on actual reward: 0 = success (reward > 0), 1 = failure
-    reward = exp_record.get("reward", 0.0)
+    reward = exp_record.get("cum_reward", 0.0)
+    print(f"reward: {reward}")
     if reward is not None and reward > 0:
         sys.exit(0)
     else:

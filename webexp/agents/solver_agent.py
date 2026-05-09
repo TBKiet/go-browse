@@ -15,6 +15,24 @@ import time
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+VALID_ACTION_PREFIXES = (
+    "click(",
+    "type(",
+    "scroll(",
+    "goto(",
+    "hover(",
+    "press(",
+    "select(",
+    "drag(",
+    "send_msg_to_user(",
+    "report_infeasible(",
+    "fill(",
+    "dblclick(",
+    "keyboard(",
+    "upload_file(",
+    "noop(",
+)
+
 def messages_to_string(messages: list[dict]) -> str:
     prompt_text_strings = []
     for message in messages:
@@ -52,13 +70,12 @@ def extract_action_and_thought(raw_string):
 
     # Step 2: Try to find and parse the LAST JSON object in the string
     # The model may output verbose reasoning before the JSON, so we look for
-    # the last occurrence of {"thought" or {"action"
-    json_start = max(
-        raw_string.rfind('{"thought"'),
-        raw_string.rfind('{"action"'),
-        raw_string.rfind('{\n  "thought"'),
-        raw_string.rfind('{\n  "action"'),
-    )
+    # the last occurrence of { followed by optional whitespace then "thought" or "action"
+    # Use regex to handle ANY indentation (single-line, 2-space, 4-space, tab, etc.)
+    json_start = -1
+    for pattern in [r'\{\s*"thought"', r'\{\s*"action"']:
+        for m in re.finditer(pattern, raw_string):
+            json_start = max(json_start, m.start())
     if json_start != -1:
         # Find matching closing brace
         depth = 0
@@ -82,7 +99,7 @@ def extract_action_and_thought(raw_string):
             except json.JSONDecodeError:
                 pass  # Fall through to regex method
 
-    # Step 3: Fallback to regex extraction
+    # Step 3: Fallback to regex extraction (requires complete action value)
     try:
         # Look for thought pattern using non-greedy match
         thought_match = re.search(r'"thought"\s*:\s*"(.*?)"(?=\s*[,}])', raw_string, re.DOTALL)
@@ -100,7 +117,45 @@ def extract_action_and_thought(raw_string):
         print(f"Error parsing string: {e}")
         return None, None
 
+    # Step 4: Truncated JSON recovery — try to extract action even if JSON is
+    # cut off mid-response (e.g., max_tokens exceeded mid-thought). Only use as
+    # last resort since the action value may be incomplete.
+    if action is None:
+        action_match = re.search(r'"action"\s*:\s*"([^"]*)', raw_string, re.DOTALL)
+        if action_match:
+            action = action_match.group(1).strip()
+            if action.endswith("')") or action.endswith('")'):
+                logger.warning(f"Recovered action from truncated JSON: {action}")
+
     return action, thought
+
+
+def sanitize_action(action: str) -> str:
+    """Strip hidden whitespace, zero-width characters, and normalize newlines
+    from an action string. Critical for preventing parser mismatches where
+    invisible characters cause multi-action detection or malformed parsing.
+
+    Handles:
+    - Zero-width space (U+200B), zero-width non-joiner (U+200C), zero-width joiner (U+200D)
+    - Zero-width no-break space (U+FEFF / BOM)
+    - Various Unicode space characters
+    - Carriage returns
+    - Leading/trailing whitespace
+    """
+    if not action:
+        return action
+    # Strip zero-width and invisible Unicode characters
+    action = action.replace('​', '')  # zero-width space
+    action = action.replace('‌', '')  # zero-width non-joiner
+    action = action.replace('‍', '')  # zero-width joiner
+    action = action.replace('﻿', '')  # zero-width no-break space / BOM
+    action = action.replace('\r\n', '\n')  # normalize Windows newlines
+    action = action.replace('\r', '\n')    # normalize old Mac newlines
+    action = action.replace('\n', '')      # remove newlines entirely (actions are single-line)
+    # Strip other common invisible characters
+    action = action.replace(' ', ' ')  # non-breaking space -> normal space
+    action = action.replace('\t', ' ')      # tab -> space
+    return action.strip()
 
 
 @AgentFactory.register
@@ -155,9 +210,12 @@ class SolverAgent(BaseAgent):
         self.prompt_builder = SolverPromptBuilder(self.action_set)
 
         self.history: list[BrowserGymAgentStepData] = []
+        self._recent_action_errors: list[tuple[str, str]] = []  # (action, error) for retry-loop detection
+        self._max_same_action_retries = 3
 
     def reset(self):
         self.history.clear()
+        self._recent_action_errors.clear()
 
     def obs_preprocessor(self, obs: dict) -> dict:
 
@@ -205,7 +263,7 @@ class SolverAgent(BaseAgent):
         current_step = BrowserGymAgentStepData(
             action=None,
             thought=None,
-            axtree=obs["axtree_txt"],
+            axtree=obs["axtree_visible_only_txt"],  # visible-only saves ~33% tokens vs full tree
             last_action_error=obs.get("last_action_error"),
             misc={}
         )
@@ -215,22 +273,84 @@ class SolverAgent(BaseAgent):
             response = self.make_llm_call_with_adaptive_retry(obs, current_step)
 
             raw_action = response.choices[0].message.content
+            logger.info(f"Raw LLM response (first 500 chars): {raw_action[:500]}")
+            logger.info(f"Raw LLM response repr (first 200 chars): {repr(raw_action[:200])}")
             action, thought = extract_action_and_thought(raw_action)
+            if action is None:
+                raise ValueError(f"Could not parse action from LLM response. Raw (first 500 chars): {raw_action[:500]}")
             current_step.misc["model_usage"] = response.usage.to_dict()
 
         else:
             action, thought = oracle_action
             raw_action = f'{{"thought": "{thought}", "action": "{action}"}}'
 
+        # Sanitize: strip hidden Unicode, zero-width chars, newlines in action
+        action = sanitize_action(action)
+        logger.info(f"Parsed action: {action}")
+        logger.info(f"Parsed action repr: {repr(action)}")
+
+        # Validate the action against known prefixes
+        if not any(action.startswith(prefix) for prefix in VALID_ACTION_PREFIXES):
+            raise ValueError(
+                f"Action '{action}' does not start with a valid prefix. "
+                f"Valid prefixes: {VALID_ACTION_PREFIXES}"
+            )
+
+        # Detect repeated action+error loops
+        last_error = obs.get("last_action_error")
+        if last_error:
+            self._recent_action_errors.append((action, last_error))
+            # Keep only last 10 entries
+            if len(self._recent_action_errors) > 10:
+                self._recent_action_errors = self._recent_action_errors[-10:]
+            # Count consecutive occurrences of the same (action, error) pair
+            same_count = 0
+            for a, e in reversed(self._recent_action_errors):
+                if a == action and e == last_error:
+                    same_count += 1
+                else:
+                    break
+            if same_count >= self._max_same_action_retries:
+                raise ValueError(
+                    f"Same action '{action}' failed {same_count} times with error: {last_error}. "
+                    f"Forcing replan to break retry loop."
+                )
+
+        # Stuck detection: check if agent is cycling through same small action set
+        if len(self.history) >= 5:
+            recent_actions = [step.action for step in self.history[-5:]]
+            unique_actions = set(recent_actions)
+            if len(unique_actions) <= 2 and len(recent_actions) >= 4:
+                # Agent has used only 1-2 unique actions in the last 5 steps — likely stuck
+                logger.warning(
+                    f"Stuck detection: only {len(unique_actions)} unique action(s) "
+                    f"({unique_actions}) in last 5 steps. Model may be in a retry loop."
+                )
+
+        # Hard stuck detection: same action N times consecutively (with or without errors)
+        # Catches silent loops like infinite scrolling or repeated clicks on static pages
+        same_action_threshold = 6
+        if len(self.history) >= same_action_threshold:
+            recent_actions = [step.action for step in self.history[-same_action_threshold:]]
+            if len(set(recent_actions)) == 1:
+                raise ValueError(
+                    f"Same action '{recent_actions[0]}' executed {same_action_threshold} "
+                    f"consecutive times. Task is stuck — forcing stop to prevent wasting steps."
+                )
+
         print(f"Raw Action:\n {raw_action}")
 
         current_step.action = action
         current_step.thought = thought
-        current_step.misc.update({"thought": thought, "parsed_action": action})
+        # Preserve last_action_error from obs so prompt builder can access historical errors
+        current_step.last_action_error = obs.get("last_action_error")
+        current_step.misc.update({"thought": thought, "parsed_action": action, "raw_action": raw_action})
 
         self.history.append(current_step)
 
-        return raw_action, current_step.misc
+        logger.info(f"Action passed to env.step(): {action}")
+        logger.info(f"Action passed to env.step() repr: {repr(action)}")
+        return action, current_step.misc
 
     def make_llm_call_with_adaptive_retry(self, obs: dict, current_step: BrowserGymAgentStepData) -> dict:
         """
@@ -269,6 +389,7 @@ class SolverAgent(BaseAgent):
                     model=model,
                     messages=messages,
                     temperature=self.temperature,
+                    max_tokens=1024,  # Qwen models emit verbose thoughts; 256 caused JSON truncation
                 )
                 if use_json_format:
                     kwargs["response_format"] = {"type": "json_object"}
