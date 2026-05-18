@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Go-Browse Framework — Phân Tích Kiến Trúc &amp; Mã Nguồn Chuyên Sâu</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #79c0ff;
+    --green: #3fb950;
+    --orange: #d2991d;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --pink: #f778ba;
+    --code-bg: #1c2128;
+    --radius: 8px;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.7;
+    max-width: 1100px; margin: 0 auto; padding: 40px 24px 120px;
+  }
+  h1 { font-size: 2.2rem; margin-bottom: 6px; color: #f0f6fc; border-bottom: 2px solid var(--border); padding-bottom: 16px; }
+  h1 .sub { display: block; font-size: 1rem; color: var(--text-muted); font-weight: 400; margin-top: 4px; }
+  h2 { font-size: 1.55rem; margin-top: 48px; margin-bottom: 16px; color: var(--accent2); border-left: 4px solid var(--accent); padding-left: 14px; }
+  h3 { font-size: 1.2rem; margin-top: 32px; margin-bottom: 10px; color: #e6edf3; }
+  h4 { font-size: 1.05rem; margin-top: 24px; margin-bottom: 8px; color: var(--orange); }
+  p { margin-bottom: 14px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono); font-size: 0.88em;
+    background: var(--code-bg); padding: 2px 6px; border-radius: 4px;
+    color: var(--pink);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 20px; overflow-x: auto; margin: 14px 0; font-size: 0.85rem;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+  .module {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 24px; margin: 18px 0;
+  }
+  .module h3 { margin-top: 0; font-size: 1.15rem; }
+  .io-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+  .io-box {
+    background: var(--code-bg); border-radius: 6px; padding: 14px 16px;
+  }
+  .io-box .label { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .io-box .label.in  { color: var(--green); }
+  .io-box .label.out { color: var(--purple); }
+  .io-box ul { padding-left: 18px; margin: 0; }
+  .io-box li { margin-bottom: 4px; font-size: 0.92rem; }
+  .logic { margin-top: 14px; }
+  .logic .label { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--orange); margin-bottom: 6px; }
+  .tag {
+    display: inline-block; padding: 2px 10px; border-radius: 12px;
+    font-size: 0.76rem; font-weight: 600; margin-right: 6px; margin-bottom: 4px;
+  }
+  .tag.oop { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .tag.algo { background: rgba(63,185,80,0.15); color: var(--green); }
+  .tag.data { background: rgba(188,140,255,0.15); color: var(--purple); }
+  .tag.file { background: rgba(210,153,29,0.15); color: var(--orange); }
+  .mermaid-container { background: #fff; border-radius: var(--radius); padding: 24px; margin: 20px 0; text-align: center; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.92rem; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--accent2); font-weight: 600; background: var(--surface); }
+  tr:hover { background: rgba(88,166,255,0.04); }
+  blockquote {
+    border-left: 3px solid var(--accent); padding: 10px 18px; margin: 16px 0;
+    background: rgba(88,166,255,0.06); border-radius: 0 var(--radius) var(--radius) 0;
+    color: var(--text-muted); font-style: italic;
+  }
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 28px; margin: 24px 0; }
+  .toc h3 { margin-top: 0; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin-bottom: 6px; }
+  .toc a { color: var(--accent2); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+  .note { background: rgba(210,153,29,0.08); border: 1px solid rgba(210,153,29,0.25); border-radius: var(--radius); padding: 14px 18px; margin: 14px 0; font-size: 0.92rem; }
+  .note strong { color: var(--orange); }
+  .callout { background: rgba(88,166,255,0.08); border: 1px solid rgba(88,166,255,0.25); border-radius: var(--radius); padding: 14px 18px; margin: 14px 0; }
+  .callout strong { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>
+  Go-Browse Framework
+  <span class="sub">Phân Tích Kiến Trúc &amp; Mã Nguồn Chuyên Sâu — Dành cho Kỹ Sư Có Nền Tảng OOP &amp; Thuật Toán</span>
+</h1>
+
+<!-- ── TOC ──────────────────────────────────────────────────────────────── -->
+<div class="toc">
+<h3>📑 Mục Lục</h3>
+<ol>
+  <li><a href="#overview">Tổng Quan Kiến Trúc</a></li>
+  <li><a href="#flow1">Luồng 1: Khám Phá Website (Go-Browse Algorithm)</a>
+    <ol>
+      <li><a href="#f1-core">Cấu Trúc Dữ Liệu Lõi (Graph, Node, Task, Trajectory, Trace)</a></li>
+      <li><a href="#f1-algo">Thuật Toán Go-Browse — Duyệt Đồ Thị BFS Có Hướng Dẫn Bởi LLM</a></li>
+      <li><a href="#f1-agents">Hệ Thống Agent (PageExplorer, NavExplorer, Solver, Feasibility Checker)</a></li>
+      <li><a href="#f1-callbacks">Cơ Chế Callback &amp; Design Patterns</a></li>
+    </ol>
+  </li>
+  <li><a href="#flow2">Luồng 2: Xử Lý Dữ Liệu (preprocess.py)</a></li>
+  <li><a href="#flow3">Luồng 3: Tạo Dữ Liệu Huấn Luyện (SFT / LoRA Pipeline)</a></li>
+  <li><a href="#summary">Tổng Kết — Bản Đồ File &amp; Liên Hệ Thuật Toán / Design Pattern</a></li>
+</ol>
+</div>
+
+<!-- ── OVERVIEW ──────────────────────────────────────────────────────────── -->
+<h2 id="overview">1. Tổng Quan Kiến Trúc</h2>
+
+<p>
+Go-Browse là một <strong>framework Python</strong> dùng để <strong>thu thập dữ liệu huấn luyện không giám sát</strong> cho web agent.
+Ý tưởng cốt lõi: cho một LLM-agent tự động duyệt qua một website, <strong>đề xuất các nhiệm vụ (task)</strong> khả thi,
+<strong>kiểm tra tính khả thi</strong>, rồi <strong>thu thập các trajectory thành công</strong> làm dữ liệu SFT (Supervised Fine-Tuning).
+</p>
+
+<div class="mermaid-container" style="background:#0d1117; padding: 20px;">
+<pre style="background:none; border:none; color:#c9d1d9; text-align:left; font-size:0.82rem; line-height:1.8;">
+┌─────────────────────────────────────────────────────────────────┐
+│                     GO-BROWSE FRAMEWORK                         │
+├───────────────┬───────────────────────┬─────────────────────────┤
+│   EXPLORE     │      PREPROCESS       │        TRAIN            │
+│ (webexp/)     │   (preprocess.py)     │  (webexp/train/)        │
+├───────────────┼───────────────────────┼─────────────────────────┤
+│ • Graph       │ • Load HF dataset     │ • SFT Policy (full)     │
+│ • Node/Task   │ • Filter positive     │ • SFT LoRA (adapter)    │
+│ • Trajectory  │ • Extract step_data   │ • train_lora.py (prod)  │
+│ • Trace       │ • Flatten messages    │                         │
+│ • Algorithm   │ • Train/Val split     │ • DataCollator for      │
+│   (BFS+LLM)   │ • Save Arrow format   │   CompletionOnlyLM      │
+│ • Agents      │                       │                         │
+│   - PageExpl. │  Input: Raw JSON/Arrow│  Input: processed Arrow │
+│   - NavExpl.  │  Output: train/ val/  │  Output: LoRA weights   │
+│   - Solver    │          Arrow dirs   │          + tokenizer    │
+│ • Callbacks   │                       │                         │
+└───────────────┴───────────────────────┴─────────────────────────┘
+</pre>
+</div>
+
+<p><strong>Package structure:</strong></p>
+<table>
+<tr><th>Thư mục</th><th>Vai trò</th></tr>
+<tr><td><code>webexp/explore/core/</code></td><td>Cấu trúc dữ liệu lõi: Graph, Node, Task, Trajectory, Trace, Episode, Evaluator</td></tr>
+<tr><td><code>webexp/explore/algorithms/</code></td><td>Thuật toán Go-Browse chính (<code>web_explore.py</code>)</td></tr>
+<tr><td><code>webexp/agents/</code></td><td>Các loại LLM-agent: Solver, PageExplorer, NavExplorer</td></tr>
+<tr><td><code>webexp/agents/prompt_builders/</code></td><td>Xây dựng prompt cho từng loại agent</td></tr>
+<tr><td><code>webexp/train/</code></td><td>Pipeline SFT &amp; LoRA</td></tr>
+<tr><td><code>webexp/benchmark/</code></td><td>Đánh giá trên WebArena benchmark</td></tr>
+<tr><td><code>preprocess.py</code></td><td>Script làm sạch dữ liệu thô</td></tr>
+<tr><td><code>train_lora.py</code></td><td>Script LoRA production-grade</td></tr>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- FLOW 1: WEBSITE EXPLORATION                                           -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="flow1">2. Luồng 1: Khám Phá Website — Thuật Toán Go-Browse</h2>
+
+<h3 id="f1-core">2.1 Cấu Trúc Dữ Liệu Lõi (Core Data Model)</h3>
+
+<p>
+Đây là phần <strong>quan trọng nhất</strong> để hiểu framework. Mọi thứ đều xoay quanh một <strong>đồ thị có hướng</strong> biểu diễn website.
+Hãy liên hệ: <strong>Graph = đồ thị, Node = đỉnh, Trace = cạnh có trọng số (đường đi), Task = bài toán cần giải trên đỉnh đó</strong>.
+</p>
+
+<!-- Graph -->
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/graph.py</span> Graph</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input</div>
+<ul>
+  <li><code>root_url: str</code> — URL gốc để bắt đầu duyệt</li>
+  <li><code>exp_dir: str</code> — thư mục lưu trữ kết quả</li>
+  <li><code>allowlist_patterns: Sequence[str]</code> — regex cho phép</li>
+  <li><code>denylist_patterns: Sequence[str]</code> — regex chặn</li>
+  <li><code>resume: bool</code> — có tiếp tục từ lần chạy trước không</li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Output / State</div>
+<ul>
+  <li><code>nodes: dict[str, Node]</code> — ánh xạ URL → Node</li>
+  <li><code>explored_nodes: list[Node]</code> — các đỉnh đã duyệt</li>
+  <li><code>unexplored_nodes: list[Node]</code> — hàng đợi BFS</li>
+  <li><code>root: Node</code> — đỉnh gốc</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic &amp; Liên Hệ Thuật Toán</div>
+<p>
+<strong>Graph</strong> chính là một <strong>đồ thị có hướng biểu diễn website</strong>, cài đặt bằng <strong>danh sách kề (adjacency list)</strong>:
+mỗi <code>Node</code> lưu danh sách <code>children</code> (các URL con). Việc duyệt đồ thị dùng chiến lược <strong>BFS</strong>:
+<code>unexplored_nodes</code> là hàng đợi FIFO, <code>get_next_node()</code> luôn lấy phần tử đầu tiên.
+</p>
+<p>
+Hàm <code>add_url()</code> giống như thêm một đỉnh mới vào đồ thị — nếu URL đã tồn tại (visited) thì không thêm lại,
+tương tự như <strong>visited set</strong> trong BFS/DFS. Hàm <code>check_if_url_allowed()</code> dùng regex để lọc
+các URL được phép — giống như điều kiện ràng buộc trong tìm kiếm có giới hạn.
+</p>
+<p>
+<span class="tag algo">BFS</span> <span class="tag oop">Adjacency List</span> <span class="tag oop">Factory (load static method)</span>
+</p>
+</div>
+</div>
+
+<!-- Node -->
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/node.py</span> Node</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input</div>
+<ul>
+  <li><code>url: str</code></li>
+  <li><code>tasks: dict[str, Task]</code> — task đã xác minh khả thi</li>
+  <li><code>exploration_tasks: dict[str, Task]</code> — task thô từ explorer</li>
+  <li><code>children: list[str]</code> — URL con (cạnh ra)</li>
+  <li><code>description: str</code></li>
+  <li><code>prefixes: list[Trace]</code> — đường đi từ trang khác đến node này</li>
+  <li><code>visited: bool</code></li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Key Methods</div>
+<ul>
+  <li><code>add_task(goal) → Task</code> — thêm task vào node</li>
+  <li><code>add_exploration_task(goal) → Task</code></li>
+  <li><code>add_trajectory(traj)</code> — lưu trajectory vào task phù hợp</li>
+  <li><code>get_feasible_tasks() → list[Task]</code> — lọc task có ít nhất 1 positive trajectory</li>
+  <li><code>update_save()</code> — persist xuống disk</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+Mỗi <strong>Node</strong> là một <strong>trang web cụ thể</strong>. Nó chứa 2 loại task: <code>tasks</code> (đã kiểm tra khả thi)
+và <code>exploration_tasks</code> (task thô do explorer đề xuất). <code>prefixes</code> là danh sách <code>Trace</code>
+— mỗi trace ghi lại <strong>đường đi</strong> từ một URL khác đến node này. Đây là cơ chế <strong>định tuyến (routing)</strong>:
+khi solver cần đến node này từ root, nó có thể dùng prefix làm "đường đi mẫu".
+</p>
+<p>
+<span class="tag oop">@dataclass</span> <span class="tag algo">Graph Vertex</span>
+</p>
+</div>
+</div>
+
+<!-- Task -->
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/task.py</span> Task</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input</div>
+<ul>
+  <li><code>goal: str</code> — mô tả nhiệm vụ (vd: "[MOD] Add iPhone 13 to cart")</li>
+  <li><code>positive_trajs: list[Trajectory]</code> — trajectory thành công</li>
+  <li><code>negative_trajs: list[Trajectory]</code> — trajectory thất bại</li>
+  <li><code>exp_dir: str</code></li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Key Methods</div>
+<ul>
+  <li><code>is_feasible() → bool</code> — có ít nhất 1 positive trajectory</li>
+  <li><code>add_trajectory(traj)</code> — phân loại vào positive/negative</li>
+  <li><code>process_raw_goal(goal) → (str, list[str])</code> — tách tag [INFO]/[NAV]/[MOD]</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+<strong>Task</strong> là một <strong>bài toán cụ thể</strong> trên một trang web. Mỗi task chứa nhiều trajectory —
+cả thành công lẫn thất bại. Tag <code>[INFO]</code> (tìm kiếm thông tin), <code>[NAV]</code> (điều hướng),
+<code>[MOD]</code> (chỉnh sửa nội dung) được parse tự động bởi regex.
+</p>
+<p>
+<span class="tag oop">@dataclass</span> <span class="tag algo">Binary Classification (feasible/not)</span>
+</p>
+</div>
+</div>
+
+<!-- Trajectory + TrajectoryStep -->
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/trajectory.py</span> Trajectory &amp; TrajectoryStep</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 TrajectoryStep Input</div>
+<ul>
+  <li><code>action: str</code> — hành động (vd: "click('42')")</li>
+  <li><code>parsed_action: str</code> — hành động đã parse</li>
+  <li><code>thought: str</code> — suy nghĩ của agent</li>
+  <li><code>observation: dict</code> — screenshot + axtree + open_pages_urls</li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Trajectory Output</div>
+<ul>
+  <li><code>steps: list[TrajectoryStep]</code></li>
+  <li><code>final_state: TrajectoryStep</code></li>
+  <li><code>goal: str, reward: float, success: bool</code></li>
+  <li><code>response: str</code> — câu trả lời cuối cùng của agent</li>
+  <li><code>agent_info: dict</code> — config của agent đã dùng</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+<strong>Trajectory</strong> là một <strong>chuỗi các bước (steps)</strong> mà agent thực hiện để hoàn thành một goal.
+Mỗi <strong>TrajectoryStep</strong> ghi lại: action (hành động), thought (lý do), và observation (trạng thái trang web sau hành động).
+Đây chính là <strong>đơn vị dữ liệu cơ bản</strong> dùng để huấn luyện: prompt = các observation + thought trước đó,
+completion = thought + action hiện tại.
+</p>
+<p>
+<span class="tag oop">@dataclass</span> <span class="tag algo">Sequence / Path in State Space</span>
+</p>
+</div>
+</div>
+
+<!-- Trace -->
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/trace.py</span> Trace</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input</div>
+<ul>
+  <li><code>steps: list[TrajectoryStep]</code></li>
+  <li><code>start_url: str</code> — URL xuất phát</li>
+  <li><code>end_url: str</code> — URL đích</li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Purpose</div>
+<ul>
+  <li>Lưu <strong>đường đi ngắn</strong> từ A → B</li>
+  <li>Dùng làm <strong>prefix</strong> cho solver khi cần navigate đến node</li>
+  <li>Nhẹ hơn Trajectory (không lưu ảnh)</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+<strong>Trace</strong> là phiên bản rút gọn của Trajectory, chỉ lưu đường đi giữa 2 URL.
+Đây chính là <strong>cạnh có trọng số</strong> trong đồ thị — trọng số là chuỗi hành động cần thực hiện.
+Khi Graph mở rộng, mỗi node mới được lưu kèm <code>prefixes</code> là danh sách Trace chỉ đường đến nó.
+</p>
+<p>
+<span class="tag algo">Weighted Edge / Path</span>
+</p>
+</div>
+</div>
+
+<!-- Evaluator -->
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/evaluator.py</span> Evaluator</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input</div>
+<ul>
+  <li><code>trajectory: Trajectory</code></li>
+  <li><code>model_name: str</code> (default: gpt-4o)</li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Output</div>
+<ul>
+  <li>Gán <code>trajectory.success = True/False</code></li>
+  <li>Gán <code>trajectory.reward = 1.0/0.0</code></li>
+  <li>Lưu evaluation info vào <code>trajectory.misc</code></li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+Dùng <strong>GPT-4V (vision)</strong> để đánh giá trajectory: gửi ảnh chụp màn hình cuối cùng + action history + goal,
+hỏi model "success" hay "failure". Đây là cơ chế <strong>tự động đánh giá không cần ground truth</strong> —
+rất quan trọng vì đây là unsupervised data collection.
+</p>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h3 id="f1-algo">2.2 Thuật Toán Go-Browse — Duyệt Đồ Thị BFS Có Hướng Dẫn Bởi LLM</h3>
+
+<div class="mermaid-container" style="background:#0d1117; padding: 20px;">
+<pre style="background:none; border:none; color:#c9d1d9; text-align:left; font-size:0.82rem; line-height:1.8;">
+┌──────────────────────────────────────────────────────────────────────┐
+│                    GO-BROWSE ALGORITHM (web_explore.py)              │
+│                                                                      │
+│  Input: root_url, allowlist, denylist, agent configs                │
+│                                                                      │
+│  1. INIT: Graph(root_url), env = BrowserEnv(root_url)               │
+│                                                                      │
+│  2. WHILE unexplored_nodes not empty AND count < max_nodes:         │
+│     │                                                                │
+│     │  curr_node = graph.get_next_node()   ←── FIFO (BFS order)     │
+│     │                                                                │
+│     │  ╔══════════════════════════════════════════════════════╗     │
+│     │  ║  PHASE 1: TASK PROPOSAL                              ║     │
+│     │  ║  ┌─────────────────┐  ┌─────────────────┐           ║     │
+│     │  ║  │ PageExplorer    │  │ NavExplorer     │           ║     │
+│     │  ║  │ (GPT-4o/Claude) │  │ (Claude 3.7)    │           ║     │
+│     │  ║  │                 │  │                 │           ║     │
+│     │  ║  │ Khám phá trang  │  │ Tìm navigation  │           ║     │
+│     │  ║  │ hiện tại → đề   │  │ tasks → đề xuất │           ║     │
+│     │  ║  │ xuất INFO/MOD/  │  │ [NAV] tasks     │           ║     │
+│     │  ║  │ NAV tasks       │  │                 │           ║     │
+│     │  ║  └────────┬────────┘  └────────┬────────┘           ║     │
+│     │  ║           ↓                    ↓                     ║     │
+│     │  ║     run_episode()       run_episode()                ║     │
+│     │  ║     (agent tự do        (agent click link,           ║     │
+│     │  ║      click, khám phá)    go_back khi đến URL mới)    ║     │
+│     │  ╚══════════════════════════════════════════════════════╝     │
+│     │                                                                │
+│     │  ╔══════════════════════════════════════════════════════╗     │
+│     │  ║  PHASE 2: FEASIBILITY CHECK                         ║     │
+│     │  ║  Với mỗi task đã đề xuất:                           ║     │
+│     │  ║    SolverAgent thử giải → Evaluator (GPT-4V) đánh   ║     │
+│     │  ║    giá → nếu success → task FEASIBLE                ║     │
+│     │  ║    Giới hạn: max_feasible_page_tasks_per_node,      ║     │
+│     │  ║              max_feasible_nav_tasks_per_node         ║     │
+│     │  ╚══════════════════════════════════════════════════════╝     │
+│     │                                                                │
+│     │  ╔══════════════════════════════════════════════════════╗     │
+│     │  ║  PHASE 3: TRAJECTORY SAMPLING                       ║     │
+│     │  ║  Với mỗi feasible task:                             ║     │
+│     │  ║    • Có prefix (từ curr_node): num_trajs lần        ║     │
+│     │  ║    • Không prefix (từ root): num_trajs lần          ║     │
+│     │  ║    → Đa dạng dữ liệu huấn luyện                     ║     │
+│     │  ╚══════════════════════════════════════════════════════╝     │
+│     │                                                                │
+│     │  ╔══════════════════════════════════════════════════════╗     │
+│     │  ║  PHASE 4: GRAPH EXPANSION (via callback)            ║     │
+│     │  ║  process_open_urls_callback tự động phát hiện       ║     │
+│     │  ║  URL mới → thêm node con vào graph                  ║     │
+│     │  ║  + lưu Trace (đường đi) làm prefix                  ║     │
+│     │  ╚══════════════════════════════════════════════════════╝     │
+│     │                                                                │
+│     │  graph.add_to_explored(curr_node)                             │
+│     │  curr_node = graph.get_next_node()                            │
+│                                                                      │
+│  Output: Graph với tasks + trajectories → lưu disk (JSON + PNG)     │
+└──────────────────────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<div class="callout">
+<strong>💡 Liên hệ thuật toán:</strong> Đây là <strong>BFS trên đồ thị web</strong> với mỗi bước được <strong>tăng cường bởi LLM</strong>.
+Thay vì chỉ duyệt URL, thuật toán còn "hiểu" nội dung trang để đề xuất task và đánh giá khả thi.
+<code>unexplored_nodes</code> là hàng đợi BFS, nhưng có thể mở rộng thành <strong>priority queue</strong> (TODO trong code)
+để ưu tiên các node "quan trọng" hơn — giống như <strong>Best-First Search</strong>.
+</div>
+
+<div class="note">
+<strong>⚠️ Tại sao dùng BFS thay vì DFS?</strong> BFS khám phá theo chiều rộng: các trang gần root được duyệt trước.
+Điều này phù hợp với web vì các trang "nông" (gần homepage) thường quan trọng hơn,
+và việc lan tỏa từ từ giúp thu thập task đa dạng hơn.
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h3 id="f1-agents">2.3 Hệ Thống Agent</h3>
+
+<div class="module">
+<h3><span class="tag file">webexp/agents/base_agent.py</span> AgentFactory &amp; Protocol Hierarchy</h3>
+<div class="logic"><div class="label">🧠 Design Pattern: Factory + Protocol/Interface</div>
+<p>
+<strong>AgentFactory</strong> dùng <strong>Factory Pattern</strong> với registry toàn cục <code>AGENT_FACTORY_REGISTRY</code>.
+Các agent class được đăng ký qua decorator <code>@AgentFactory.register</code>. Khi cần tạo agent từ config YAML,
+chỉ cần gọi <code>AgentFactory.create_agent(name=..., model_id=...)</code>.
+</p>
+<p>
+<strong>Protocol hierarchy</strong> (Structural Typing — giống Interface trong Java/C#):
+</p>
+<pre><code>Agent (Protocol)           ← get_action(), reset(), obs_preprocessor()
+  ├── ExplorerAgent        ← get_proposed_tasks(), goal_str
+  └── AgentWithExplorationCallbacks  ← pre/post step callbacks
+
+BaseAgent (ABC)            ← implement cụ thể
+  └── SolverAgent          ← @AgentFactory.register
+        ├── PageExplorerAgent   ← @AgentFactory.register
+        └── NavExplorerAgent    ← @AgentFactory.register</code></pre>
+<p>
+<span class="tag oop">Factory Pattern</span> <span class="tag oop">Protocol (Structural Interface)</span> <span class="tag oop">Decorator (@register)</span> <span class="tag oop">Template Method (BaseAgent)</span>
+</p>
+</div>
+</div>
+
+<div class="module">
+<h3><span class="tag file">webexp/agents/solver_agent.py</span> SolverAgent</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input (per step)</div>
+<ul>
+  <li><code>obs: dict</code> — observation từ BrowserGym (screenshot, axtree, DOM, URL...)</li>
+  <li><code>oracle_action: tuple[str,str]</code> — hành động có sẵn (callback inject)</li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Output (per step)</div>
+<ul>
+  <li><code>action: str</code> — hành động cho BrowserGym (vd: "click('42')")</li>
+  <li><code>extras: dict</code> — thought, parsed_action, model_usage</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+<strong>SolverAgent</strong> là agent chính để <strong>giải quyết task</strong>. Mỗi bước:
+</p>
+<ol>
+  <li><strong>obs_preprocessor</strong>: Chuẩn hóa observation — flatten axtree, prune HTML, extract URLs</li>
+  <li><strong>Prompt Builder</strong>: Xây dựng messages gồm system prompt + goal + axtree + action history + error context</li>
+  <li><strong>LLM Call</strong> (với adaptive retry): Gọi OpenAI-compatible API để sinh JSON <code>{"thought": ..., "action": ...}</code></li>
+  <li><strong>extract_action_and_thought</strong>: Parse JSON từ raw output, xử lý edge case (text trước JSON, truncated JSON, zero-width chars)</li>
+  <li><strong>Stuck Detection</strong>: Phát hiện agent bị kẹt (cùng action lặp ≥6 lần, hoặc cùng action+error ≥3 lần)</li>
+  <li><strong>action_processor</strong>: Convert sang Python code cho BrowserGym</li>
+</ol>
+<p>
+<span class="tag algo">State Machine (per-step cycle)</span> <span class="tag algo">Cycle Detection (stuck detection)</span>
+</p>
+</div>
+</div>
+
+<div class="module">
+<h3><span class="tag file">webexp/agents/page_explorer_agent.py</span> PageExplorerAgent</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input</div>
+<ul>
+  <li>Kế thừa SolverAgent + thêm <code>add_tasks_to_dataset()</code> action</li>
+  <li><code>goal_str</code>: "thu thập task [INFO]/[NAV]/[MOD] từ trang hiện tại"</li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Output</div>
+<ul>
+  <li><code>get_proposed_tasks() → list[str]</code> — danh sách task đã đề xuất</li>
+  <li>Mỗi task có tag: [INFO] information seeking, [NAV] navigation, [MOD] content modification</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+Agent này <strong>tự do khám phá trang web</strong>: click vào buttons, menus, hover elements để hiểu nội dung.
+Khi tìm thấy task khả thi, agent gọi <code>add_tasks_to_dataset()</code> — đây là một <strong>custom BrowserGym action</strong>
+được đăng ký vào <code>HighLevelActionSet</code>. Các task được tích vào <code>TASK_COLLECTOR</code> global list.
+</p>
+<p>
+<strong>Quy trình khám phá:</strong> Tìm INFO tasks (dựa trên nội dung tĩnh) → NAV tasks (click link, go_back) → MOD tasks (tương tác form).
+</p>
+</div>
+</div>
+
+<div class="module">
+<h3><span class="tag file">webexp/agents/nav_explorer_agent.py</span> NavExplorerAgent</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input</div>
+<ul>
+  <li>Giống PageExplorer nhưng goal_str tập trung vào NAV tasks</li>
+  <li>Callback: <code>backtrack_when_new_page_found</code> tự động go_back khi đến URL mới</li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Output</div>
+<ul>
+  <li><code>get_proposed_tasks() → list[str]</code> — chỉ [NAV] tasks</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+Khác với PageExplorer, NavExplorer <strong>được phép click link để đến trang mới</strong>, nhưng sau đó phải <strong>go_back</strong>
+về trang gốc. Callback <code>backtrack_when_new_page_found</code> tự động phát hiện khi URL thay đổi
+và inject oracle_action <code>("go_back()", ...)</code> để agent quay về.
+</p>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h3 id="f1-callbacks">2.4 Cơ Chế Callback &amp; Design Patterns</h3>
+
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/agent.py</span> wrap_agent_for_callback_protocol</h3>
+<div class="logic"><div class="label">🧠 Design Pattern: Decorator + Chain of Responsibility</div>
+<p>
+Đây là một trong những pattern hay nhất trong framework. Agent được <strong>wrap</strong> bởi
+<code>CallbackProtocolAgentWrapper</code> — một dynamic class kế thừa ngay type của agent gốc.
+Wrapper này thêm pre-step và post-step callbacks được gọi <strong>trước và sau mỗi action</strong>.
+</p>
+<p><strong>Callback chain trong Go-Browse:</strong></p>
+<pre><code>PRE-STEP:
+  prestep_store_url           → lưu URL hiện tại vào callback_context
+
+POST-STEP (theo thứ tự):
+  backtrack_if_needed         → nếu URL bị block → go_back()
+  process_open_urls_callback  → phát hiện URL mới → thêm node vào graph
+  backtrack_when_new_page_found → (chỉ NavExplorer) nếu URL thay đổi → go_back()</code></pre>
+<p>
+<span class="tag oop">Decorator Pattern</span> <span class="tag oop">Chain of Responsibility</span> <span class="tag oop">Observer Pattern</span> <span class="tag oop">Dynamic Proxy (Python __getattr__)</span>
+</p>
+</div>
+</div>
+
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/episode.py</span> run_episode()</h3>
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input</div>
+<ul>
+  <li><code>goal: str</code> — nhiệm vụ cần thực hiện</li>
+  <li><code>node: Node</code> — node xuất phát</li>
+  <li><code>env: BrowserEnv</code> — môi trường browser</li>
+  <li><code>agent: AgentWithExplorationCallbacks</code></li>
+  <li><code>evaluator: Evaluator</code></li>
+  <li><code>graph: Graph</code></li>
+  <li><code>max_steps: int</code></li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Output</div>
+<ul>
+  <li><code>Trajectory</code> — đầy đủ steps + final_state + response</li>
+  <li>Trajectory đã được evaluator đánh giá (nếu là solver)</li>
+</ul></div>
+</div>
+<div class="logic"><div class="label">🧠 Logic — Vòng Lặp Chính Của Một Episode</div>
+<pre><code>1. reset_env_to_node()    → mở browser, goto(node.url), set goal
+2. agent.reset()          → xóa history
+3. Trajectory.from_goal() → tạo trajectory rỗng
+4. WHILE not done AND num_steps < max_steps:
+   a. agent.run_pre_step_callbacks()    ← Chain of Responsibility
+   b. agent.get_action(obs)             ← LLM inference
+   c. env.step(action)                  ← thực thi trong browser
+   d. agent.run_post_step_callbacks()   ← Chain of Responsibility
+   e. Check has_new_assistant_message() → agent trả lời user?
+      Nếu có: evaluator.evaluate(traj)  ← GPT-4V đánh giá
+5. traj.extract_response(env)           ← lấy final message
+6. Lưu final_state</code></pre>
+</div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- FLOW 2: DATA PROCESSING                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="flow2">3. Luồng 2: Xử Lý Dữ Liệu (preprocess.py)</h2>
+
+<div class="module">
+<h3><span class="tag file">preprocess.py</span> — Pipeline Làm Sạch Dữ Liệu</h3>
+
+<div class="mermaid-container" style="background:#0d1117; padding: 20px;">
+<pre style="background:none; border:none; color:#c9d1d9; text-align:left; font-size:0.82rem; line-height:1.8;">
+┌──────────────────────────────────────────────────────────────────┐
+│                    PREPROCESS PIPELINE                           │
+│                                                                  │
+│  INPUT                                                           │
+│  ├── HuggingFace: apurvaga/go-browse-wa (Arrow dataset)         │
+│  └── Local: data_local/go-browse-wa/ (Arrow files)              │
+│                                                                  │
+│  STEP 1: inspect_dataset()                                       │
+│    → In schema, num_samples, traj_reward distribution,          │
+│      step_data structure                                         │
+│                                                                  │
+│  STEP 2: clean_and_filter()                                      │
+│    → Filter: traj_reward > 0  (chỉ giữ trajectory thành công)   │
+│    → Extract step_data (handle dict vs list column types)       │
+│    → Filter malformed (cần có prompt + completion)               │
+│                                                                  │
+│  STEP 3: build_processed_dataset()                               │
+│    → flatten_conversation: prompt[] + completion[] → messages[] │
+│    → Gộp thành 1 list messages duy nhất                         │
+│    → KHÔNG apply chat template (để training script làm)         │
+│                                                                  │
+│  STEP 4: train_test_split()                                      │
+│    → val_size=0.05 (default), seed=42                           │
+│                                                                  │
+│  STEP 5: save_to_disk()                                          │
+│    → processed_data/train/  (Arrow format)                       │
+│    → processed_data/val/    (Arrow format)                       │
+│    → processed_data/metadata.json                                │
+│                                                                  │
+│  OUTPUT: processed_data/{train,val}/ + metadata.json             │
+└──────────────────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<div class="io-grid">
+<div class="io-box"><div class="label in">📥 Input Schema (raw)</div>
+<ul>
+  <li><code>traj_reward: float</code> — 1.0 (thành công) / 0.0 (thất bại)</li>
+  <li><code>step_data: dict | list</code> — chứa prompt + completion</li>
+  <li><code>step_data.prompt: list[dict]</code> — messages hệ thống + user</li>
+  <li><code>step_data.completion: list[dict]</code> — messages assistant</li>
+  <li>Mỗi message: <code>{"role": "...", "content": "..."}</code></li>
+</ul></div>
+<div class="io-box"><div class="label out">📤 Output Schema (processed)</div>
+<ul>
+  <li><code>messages: list[dict]</code> — prompt + completion đã gộp</li>
+  <li>Mỗi message: <code>{"role": "system/user/assistant", "content": "..."}</code></li>
+  <li>Định dạng chuẩn cho HuggingFace chat template</li>
+</ul></div>
+</div>
+
+<div class="logic"><div class="label">🧠 Logic — Tại Sao Không Apply Chat Template Ở Đây?</div>
+<p>
+Chat template phụ thuộc vào <strong>tokenizer của model cụ thể</strong>. Ví dụ Qwen dùng
+<code>&lt;|im_start|&gt;user\n...&lt;|im_end|&gt;</code> trong khi Llama dùng format khác.
+Nếu apply chat template ở preprocess, khi đổi model phải chạy lại toàn bộ pipeline.
+Thay vào đó, preprocess chỉ gộp messages, còn <strong>training script mới apply chat template</strong>
+với đúng tokenizer của model đang train. Đây là <strong>separation of concerns</strong>.
+</p>
+</div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- FLOW 3: TRAINING                                                      -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="flow3">4. Luồng 3: Tạo Dữ Liệu Huấn Luyện &amp; Fine-Tuning</h2>
+
+<div class="module">
+<h3><span class="tag file">train_lora.py</span> — Production LoRA Fine-Tuning Pipeline</h3>
+
+<div class="mermaid-container" style="background:#0d1117; padding: 20px;">
+<pre style="background:none; border:none; color:#c9d1d9; text-align:left; font-size:0.82rem; line-height:1.8;">
+┌──────────────────────────────────────────────────────────────────┐
+│                   LoRA TRAINING PIPELINE                         │
+│                                                                  │
+│  INPUT                                                           │
+│  ├── processed_data/train/  (Arrow, có field "messages")        │
+│  ├── processed_data/val/    (Arrow, có field "messages")        │
+│  └── Base model: Qwen/Qwen3.5-9B                                │
+│                                                                  │
+│  STEP 1: load_and_prepare_dataset()                              │
+│    → tokenizer.apply_chat_template(messages) → "text" field     │
+│    → Kết quả: chuỗi văn bản đã tokenize-ready                   │
+│                                                                  │
+│  STEP 2: LoRA Config                                             │
+│    → r=16, alpha=32, dropout=0.05                               │
+│    → target_modules: q_proj, k_proj, v_proj, o_proj,            │
+│                      gate_proj, up_proj, down_proj               │
+│    → task_type: CAUSAL_LM                                        │
+│                                                                  │
+│  STEP 3: SFT Config                                              │
+│    → per_device_batch=1, grad_accum=4 (effective=4×GPUs)        │
+│    → max_seq_length=8192, packing=True                           │
+│    → bf16, gradient_checkpointing, DeepSpeed ZeRO-2              │
+│    → learning_rate=2e-5, cosine schedule, warmup=100            │
+│                                                                  │
+│  STEP 4: SFTTrainer.train()                                      │
+│    → Data collator: completion-only (chỉ tính loss trên          │
+│      assistant tokens — không tính loss trên prompt)             │
+│    → Mỗi sample: text = &lt;system&gt; + &lt;user&gt; + &lt;assistant&gt;        │
+│                  loss chỉ tính trên phần &lt;assistant&gt;             │
+│                                                                  │
+│  OUTPUT: outputs/qwen3.5-9b-lora/                                │
+│  ├── adapter_config.json + adapter_model.safetensors            │
+│  └── tokenizer files                                             │
+└──────────────────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<h4>Data Format Chi Tiết</h4>
+<table>
+<tr><th>Giai Đoạn</th><th>Format</th><th>Ví Dụ</th></tr>
+<tr>
+  <td>Raw (từ exploration)</td>
+  <td><code>{traj_reward, step_data: {prompt: [...], completion: [...]}}</code></td>
+  <td>JSON object từ Graph/Trajectory save</td>
+</tr>
+<tr>
+  <td>Processed (sau preprocess.py)</td>
+  <td><code>{messages: [{role, content}, ...]}</code></td>
+  <td><code>[{role:"system", content:"..."}, {role:"user", content:"axtree + goal..."}, {role:"assistant", content:'{"thought":"...","action":"..."}'}]</code></td>
+</tr>
+<tr>
+  <td>Training-ready (sau apply_chat_template)</td>
+  <td><code>{text: "&lt;|im_start|&gt;system\n...&lt;|im_end|&gt;\n&lt;|im_start|&gt;user\n..."}</code></td>
+  <td>Chuỗi văn bản đã format theo chat template của model</td>
+</tr>
+</table>
+
+<div class="logic"><div class="label">🧠 Logic — Input &amp; Target Cho Fine-Tuning</div>
+<p>
+Đây là <strong>Supervised Fine-Tuning (SFT)</strong> với <strong>completion-only loss</strong>:
+</p>
+<ul>
+  <li><strong>Input (prompt tokens):</strong> System prompt + Goal + Axtree (cây accessibility) + Action history + Error context<br>
+  → Loss = 0 (không học từ input)</li>
+  <li><strong>Target (completion tokens):</strong> Thought + Action của assistant<br>
+  → Loss = cross-entropy (học cách sinh ra thought và action đúng)</li>
+</ul>
+<p>
+<strong>DataCollatorForCompletionOnlyLM</strong> nhận diện phần assistant bằng response template
+(vd: <code>&lt;|im_start|&gt;assistant\n</code>) và chỉ tính loss trên các token sau mốc đó.
+</p>
+<p>
+<span class="tag algo">Causal LM (next-token prediction)</span> <span class="tag algo">Completion-Only Loss Masking</span>
+</p>
+</div>
+</div>
+
+<div class="module">
+<h3><span class="tag file">webexp/train/sft_policy.py</span> — Full SFT (Behavioral Cloning)</h3>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+Script này thực hiện <strong>full SFT</strong> (không dùng LoRA) — cập nhật toàn bộ tham số model.
+Dùng cho Qwen2.5-7B-Instruct với flash_attention_2, sequence length lên đến 24K tokens,
+<code>DataCollatorForCompletionOnlyLM</code> để chỉ học từ assistant tokens.
+Khác với <code>train_lora.py</code> ở chỗ: train toàn bộ model (nặng hơn), dùng <code>paged_adamw_8bit</code>,
+packing=False (vì sequence đã rất dài).
+</p>
+</div>
+</div>
+
+<div class="module">
+<h3><span class="tag file">webexp/train/sft_lora.py</span> — Simplified LoRA Script</h3>
+<div class="logic"><div class="label">🧠 Logic</div>
+<p>
+Phiên bản đơn giản hơn của <code>train_lora.py</code> — dùng cho quick experimentation.
+Load trực tiếp từ HuggingFace dataset, không qua preprocess.py.
+</p>
+</div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- SUMMARY                                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="summary">5. Tổng Kết — Bản Đồ File &amp; Liên Hệ</h2>
+
+<h3>5.1 File Map — Từng File Một</h3>
+<table>
+<tr><th>File</th><th>Vai trò</th><th>Design Pattern / Algorithm</th></tr>
+<tr><td><code>webexp/explore/core/graph.py</code></td><td>Đồ thị website (adjacency list)</td><td>BFS queue, Visited set, Regex filter</td></tr>
+<tr><td><code>webexp/explore/core/node.py</code></td><td>Đỉnh đồ thị = 1 trang web</td><td>@dataclass, Composite (chứa Tasks)</td></tr>
+<tr><td><code>webexp/explore/core/task.py</code></td><td>Nhiệm vụ + trajectory</td><td>@dataclass, Binary classification (feasible/not)</td></tr>
+<tr><td><code>webexp/explore/core/trajectory.py</code></td><td>Chuỗi steps của agent</td><td>@dataclass, Sequence/Path</td></tr>
+<tr><td><code>webexp/explore/core/trace.py</code></td><td>Đường đi rút gọn giữa 2 URL</td><td>Weighted edge</td></tr>
+<tr><td><code>webexp/explore/core/evaluator.py</code></td><td>Đánh giá trajectory bằng GPT-4V</td><td>Strategy (LLM-as-judge)</td></tr>
+<tr><td><code>webexp/explore/core/episode.py</code></td><td>Vòng lặp episode (agent + env)</td><td>State Machine, Chain of Responsibility</td></tr>
+<tr><td><code>webexp/explore/core/agent.py</code></td><td>Callback wrapper cho agent</td><td>Decorator, Proxy, Chain of Responsibility</td></tr>
+<tr><td><code>webexp/explore/algorithms/web_explore.py</code></td><td>Thuật toán Go-Browse chính</td><td>BFS + LLM-guided exploration</td></tr>
+<tr><td><code>webexp/agents/base_agent.py</code></td><td>Agent factory + protocol</td><td>Factory, Protocol (Interface)</td></tr>
+<tr><td><code>webexp/agents/solver_agent.py</code></td><td>Agent giải quyết task</td><td>Template Method, Cycle Detection</td></tr>
+<tr><td><code>webexp/agents/page_explorer_agent.py</code></td><td>Agent khám phá task trên trang</td><td>Strategy (khác goal_str + action set)</td></tr>
+<tr><td><code>webexp/agents/nav_explorer_agent.py</code></td><td>Agent tìm navigation task</td><td>Strategy (khác goal_str + action set)</td></tr>
+<tr><td><code>webexp/agents/prompt_builders/</code></td><td>Xây dựng prompt cho agent</td><td>Builder, Template Method</td></tr>
+<tr><td><code>preprocess.py</code></td><td>Làm sạch dữ liệu thô</td><td>Pipeline (Filter → Map → Split)</td></tr>
+<tr><td><code>train_lora.py</code></td><td>Fine-tune LoRA production</td><td>SFT + LoRA + DeepSpeed</td></tr>
+<tr><td><code>webexp/train/sft_policy.py</code></td><td>Full SFT (behavioral cloning)</td><td>SFT + Completion-Only Loss</td></tr>
+<tr><td><code>webexp/train/sft_lora.py</code></td><td>LoRA (đơn giản, thử nghiệm)</td><td>SFT + LoRA</td></tr>
+</table>
+
+<h3>5.2 Design Patterns Chính Được Sử Dụng</h3>
+<table>
+<tr><th>Pattern</th><th>Xuất hiện ở đâu</th><th>Tác dụng</th></tr>
+<tr><td><strong>Factory</strong></td><td>AgentFactory, PromptBuilderFactory</td><td>Tạo agent/prompt builder từ config string, dễ mở rộng</td></tr>
+<tr><td><strong>Strategy</strong></td><td>PageExplorer vs NavExplorer vs Solver</td><td>Cùng interface Agent, khác behavior (goal_str, action_set, callbacks)</td></tr>
+<tr><td><strong>Decorator</strong></td><td>wrap_agent_for_callback_protocol</td><td>Thêm pre/post step hooks mà không sửa code agent gốc</td></tr>
+<tr><td><strong>Chain of Responsibility</strong></td><td>Callback chain (backtrack → process_urls → ...)</td><td>Mỗi callback xử lý 1 aspect, có thể thêm/bớt linh hoạt</td></tr>
+<tr><td><strong>Observer</strong></td><td>Callbacks phản ứng với step events</td><td>Graph tự động mở rộng khi phát hiện URL mới</td></tr>
+<tr><td><strong>Protocol (Interface)</strong></td><td>Agent, ExplorerAgent, AgentWithExplorationCallbacks</td><td>Structural subtyping — không cần kế thừa cứng</td></tr>
+<tr><td><strong>Template Method</strong></td><td>BaseAgent → SolverAgent → ExplorerAgents</td><td>Định nghĩa skeleton, subclass override behavior</td></tr>
+<tr><td><strong>@dataclass</strong></td><td>Tất cả data model</td><td>Giảm boilerplate, tự động __init__/__repr__/__eq__</td></tr>
+</table>
+
+<h3>5.3 Liên Hệ Thuật Toán</h3>
+<table>
+<tr><th>Khái Niệm</th><th>Trong Go-Browse</th><th>Liên hệ cổ điển</th></tr>
+<tr><td><strong>Đồ thị</strong></td><td>Graph = website (Node = URL, Edge = navigation)</td><td>Adjacency list, directed graph</td></tr>
+<tr><td><strong>Duyệt đồ thị</strong></td><td>BFS từ root URL qua unexplored_nodes queue</td><td>BFS (có thể nâng lên Best-First với priority)</td></tr>
+<tr><td><strong>Tìm đường</strong></td><td>Trace = đường đi giữa 2 URL (prefix cho solver)</td><td>Shortest path / path recording</td></tr>
+<tr><td><strong>Phân loại</strong></td><td>Task feasible/not, trajectory success/failure</td><td>Binary classification</td></tr>
+<tr><td><strong>Phát hiện chu kỳ</strong></td><td>Stuck detection: phát hiện agent lặp action</td><td>Cycle detection trong state machine</td></tr>
+<tr><td><strong>Tìm kiếm trạng thái</strong></td><td>Mỗi trajectory = 1 path trong không gian trạng thái</td><td>State-space search (BFS/DFS trên state graph)</td></tr>
+</table>
+
+<div class="callout">
+<strong>🔑 Insight quan trọng nhất:</strong> Go-Browse biến bài toán <strong>"thu thập dữ liệu huấn luyện web agent"</strong>
+thành bài toán <strong>"duyệt đồ thị có hướng dẫn bởi LLM"</strong>. Mỗi node là một trang web, mỗi edge là
+một navigation path. LLM vừa đóng vai trò <strong>node expander</strong> (đề xuất task),
+<strong>feasibility filter</strong> (kiểm tra khả thi), và <strong>path sampler</strong> (tạo trajectory đa dạng).
+Kết quả là một tập dữ liệu SFT chất lượng cao mà không cần bất kỳ annotation thủ công nào.
+</div>
+
+<hr>
+<p style="text-align:center; color: var(--text-muted); font-size:0.88rem; margin-top:40px;">
+Go-Browse Framework — Deep Code Analysis — 2026<br>
+Phân tích dựa trên mã nguồn thực tế trong workspace
+</p>
+
+</body>
+</html>

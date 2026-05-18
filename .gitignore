@@ -1,0 +1,36 @@
+# Training outputs
+outputs/
+processed_data/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.venv/
+venv/
+
+# WandB
+wandb/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large data (keep the demo subset only)
+data_local/
+datasets/
+
+# Local archives
+go-browse.zip

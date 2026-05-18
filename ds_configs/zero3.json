@@ -1,0 +1,28 @@
+{
+    "bf16": {
+        "enabled": true
+    },
+    "zero_optimization": {
+        "stage": 3,
+        "overlap_comm": true,
+        "contiguous_gradients": true,
+        "reduce_bucket_size": 2e8,
+        "allgather_partitions": true,
+        "allgather_bucket_size": 2e8,
+        "reduce_scatter": true,
+        "stage3_prefetch_bucket_size": 2e8,
+        "stage3_max_live_parameters": 1e8,
+        "stage3_max_reuse_distance": 1e8,
+        "stage3_param_persistence_threshold": 1e5,
+        "sub_group_size": 5e7,
+        "round_robin_gradients": true,
+        "stage3_gather_16bit_weights_on_model_save": true
+    },
+    "communication_data_type": "torch.float16",
+    "gradient_accumulation_steps": "auto",
+    "gradient_clipping": 1.0,
+    "train_batch_size": "auto",
+    "train_micro_batch_size_per_gpu": "auto",
+    "steps_per_print": 10,
+    "wall_clock_breakdown": false
+}
