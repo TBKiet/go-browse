@@ -1,12 +1,14 @@
 from ..core.agent import AgentWithExplorationCallbacks, ExplorerAgentWithExplorationCallbacks, wrap_agent_for_callback_protocol
 from ..core.evaluator import Evaluator
-from ..core.episode import run_episode, get_action, perform_env_step
+from ..core.episode import run_episode, get_action, perform_env_step, get_fresh_obs
 from ..core.graph import Graph
 from ..core.node import Node
 from ..core.task import Task
 from ..core.trace import Trace
 from ..core.trajectory import Trajectory
 from ...agents.base_agent import AgentFactory
+from ...agents.task_summarization_agent import TaskSummarizationAgent
+from ...agents.captcha_detection_agent import CaptchaDetectionAgent
 from browsergym.core.env import BrowserEnv
 from browsergym.experiments.loop import EnvArgs
 from dataclasses import dataclass
@@ -401,6 +403,38 @@ def process_open_urls_callback(
     return step_num, obs, reward, terminated, truncated, env_info, goal, callback_context
 
 
+def _summarize_node_trajectories(node: Node, model_name: str):
+    """Summarize trajectories for all feasible tasks on a node.
+
+    Uses TaskSummarizationAgent to produce clean task descriptions from
+    the full action history and screenshots of successful trajectories.
+    """
+    summarizer = TaskSummarizationAgent(model_name=model_name)
+    feasible_tasks = node.get_feasible_tasks()
+
+    for task in feasible_tasks:
+        for traj in task.positive_trajs:
+            if traj.misc is None:
+                traj.misc = {}
+            if traj.misc.get("summarized_goal"):
+                continue  # Already summarized
+            summarized = summarizer.summarize(traj)
+            if summarized:
+                traj.misc["summarized_goal"] = summarized
+                traj.save_info()
+                logger.info(f"Summarized goal for task '{task.goal[:100]}': {summarized[:200]}")
+
+        for traj in task.negative_trajs:
+            if traj.misc is None:
+                traj.misc = {}
+            if traj.misc.get("summarized_goal"):
+                continue
+            summarized = summarizer.summarize(traj)
+            if summarized:
+                traj.misc["summarized_goal"] = summarized
+                traj.save_info()
+
+
 def web_explore_loop():
 
     parser = argparse.ArgumentParser(description="Run an episode with a browser gym agent.")
@@ -466,6 +500,7 @@ def web_explore_loop():
     root_url = env.page.url
 
     evaluator = Evaluator(**config.evaluator)
+    captcha_detector = CaptchaDetectionAgent(model_name=config.evaluator.get("model_name", "gpt-4o-2024-05-13"))
 
     if config.resume_from:
         graph = Graph.load(os.path.join(config.resume_from, "graph"), load_images=False)
@@ -484,6 +519,15 @@ def web_explore_loop():
         while curr_node and exploration_count < config.max_nodes:
             
             logger.info(f"Exploring node {curr_node.url} ...")
+
+            # Phase 7: Check for CAPTCHA before exploring
+            obs = get_fresh_obs(env)
+            if "screenshot" in obs and captcha_detector.is_captcha(obs["screenshot"]):
+                logger.warning(f"CAPTCHA detected at {curr_node.url}, skipping node.")
+                graph.add_to_explored(curr_node)
+                exploration_count += 1
+                curr_node = graph.get_next_node()
+                continue
 
             if hasattr(config, 'full_reset_url') and config.full_reset_url:
                 logger.info(f"Performing full env reset with url: {config.full_reset_url}")
@@ -550,7 +594,10 @@ def web_explore_loop():
                     graph=graph,
                     max_steps=config.solvers[i].max_steps,
                     num_trajs_per_task=config.solvers[i].retries
-                )  
+                )
+
+            # Phase 3: Summarize trajectories to produce clean semantic task descriptions
+            _summarize_node_trajectories(curr_node, evaluator.model_name)
 
             graph.add_to_explored(curr_node)
             exploration_count += 1

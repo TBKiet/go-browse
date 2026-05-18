@@ -89,31 +89,46 @@ def get_action(
 ) -> tuple[str, dict]:
     """
     Get the action from the agent.
-    
+
     Args:
         env: The environment to get the action from.
         agent (BaseAgent): The agent to get the action from.
         obs (dict): The observation from the environment.
         traj (Trajectory): The trajectory of the episode.
         oracle_action (str, optional): The oracle action to use if available.
-    
+
     Returns:
         tuple: The action and action extras dict from the agent.
     """
     action, action_extras = agent.get_action(obs, oracle_action=oracle_action)
     thought = action_extras.get("thought", None)
     parsed_action = action_extras.get("parsed_action", None)
+    action_nl = action_extras.get("action_nl", None)
+    refined_goal = action_extras.get("refined_goal", None)
+    element_metadata = action_extras.get("element_metadata", None)
+    page_url_before = action_extras.get("page_url_before", None)
 
     if thought and "think" not in action_extras:
         action_extras["think"] = thought
 
     logger.info(f"Agent chose action: \n{action}")
-    
-    traj.add_step(action, parsed_action, thought, obs, {'model_usage': action_extras.get("model_usage", None), 'agent_config': agent.get_config()})
+    if action_nl:
+        logger.info(f"Action (NL): {action_nl[:200]}")
+    if refined_goal:
+        logger.info(f"Refined goal: {refined_goal[:200]}")
 
-    # TODO: Need a more stable api for modifying the chat pane. Perhaps we can create an env wrapper that exposes such as an api.
+    traj.add_step(
+        action, parsed_action, thought, obs,
+        misc={'model_usage': action_extras.get("model_usage", None), 'agent_config': agent.get_config()},
+        action_nl=action_nl,
+        refined_goal=refined_goal,
+        action_reasoning=thought,  # thought serves as reasoning for the action
+        element_metadata=element_metadata,
+        page_url_before=page_url_before,
+    )
+
     _send_chat_info(env.chat, action, action_extras)
-    
+
     return action, action_extras
 
 
@@ -213,7 +228,19 @@ def run_episode(
             agent=agent,
             action=action,
         )
-        
+
+        # Record page_url_after in the last trajectory step
+        if traj.steps:
+            last_step = traj.steps[-1]
+            open_urls = obs.get("open_pages_urls", [])
+            if open_urls:
+                last_step.page_url_after = open_urls[0]
+
+        # Propagate refined_goal to next step via callback_context_seed
+        refined_goal = action_extras.get("refined_goal")
+        if refined_goal:
+            callback_context_seed["refined_goal"] = refined_goal
+
         if has_new_assistant_message(env):
             logger.info("New assistant message received.")
             terminated = True

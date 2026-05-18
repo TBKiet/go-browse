@@ -1,6 +1,7 @@
 from .base_agent import AgentFactory, BaseAgent
 from .prompt_builders.solver_prompt_builder import SolverPromptBuilder
 from .trajectory_data import BrowserGymAgentStepData
+from ..explore.grounding.som_processor import process_observation
 from browsergym.core.action.highlevel import HighLevelActionSet
 from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prune_html
 from openai import OpenAI
@@ -57,27 +58,40 @@ def extract_action_and_thought(raw_string):
     Returns:
         tuple: (action, thought) or (None, None) if extraction fails
     """
-    thought = None
-    action = None
-
-    if not raw_string:
+    parsed = _extract_full_response(raw_string)
+    if parsed is None:
         return None, None
+    return parsed.get("action"), parsed.get("thought")
 
-    # Step 1: Strip text before </think> marker (common in Qwen/DeepSeek output)
+
+def _extract_full_response(raw_string: str) -> dict | None:
+    """Extract the full JSON response dict from raw LLM output.
+
+    Parses thought, action, action_in_natural_language, and refined_goal
+    from the LLM JSON response. Handles all the same edge cases as
+    extract_action_and_thought.
+
+    Args:
+        raw_string (str): Raw string from LLM
+
+    Returns:
+        dict with keys: action, thought, action_nl, refined_goal
+        or None if extraction fails
+    """
+    if not raw_string:
+        return None
+
+    # Step 1: Strip text before </think> marker
     think_end = raw_string.rfind("</think>")
     if think_end != -1:
         raw_string = raw_string[think_end + len("</think>"):]
 
-    # Step 2: Try to find and parse the LAST JSON object in the string
-    # The model may output verbose reasoning before the JSON, so we look for
-    # the last occurrence of { followed by optional whitespace then "thought" or "action"
-    # Use regex to handle ANY indentation (single-line, 2-space, 4-space, tab, etc.)
+    # Step 2: Find and parse the LAST valid JSON object
     json_start = -1
     for pattern in [r'\{\s*"thought"', r'\{\s*"action"']:
         for m in re.finditer(pattern, raw_string):
             json_start = max(json_start, m.start())
     if json_start != -1:
-        # Find matching closing brace
         depth = 0
         json_end = -1
         for i in range(json_start, len(raw_string)):
@@ -92,42 +106,83 @@ def extract_action_and_thought(raw_string):
             json_str = raw_string[json_start:json_end + 1]
             try:
                 parsed = json.loads(json_str)
-                thought = parsed.get("thought")
-                action = parsed.get("action")
-                if action:
-                    return action, thought
+                if parsed.get("action"):
+                    return {
+                        "action": parsed.get("action"),
+                        "thought": parsed.get("thought"),
+                        "action_nl": parsed.get("action_in_natural_language"),
+                        "refined_goal": parsed.get("refined_goal"),
+                    }
             except json.JSONDecodeError:
-                pass  # Fall through to regex method
+                pass
 
-    # Step 3: Fallback to regex extraction (requires complete action value)
+    # Step 3: Fallback to regex extraction
     try:
-        # Look for thought pattern using non-greedy match
+        result = {}
         thought_match = re.search(r'"thought"\s*:\s*"(.*?)"(?=\s*[,}])', raw_string, re.DOTALL)
         if thought_match:
-            thought = thought_match.group(1)
-            thought = thought.replace('\\"', '"')
+            result["thought"] = thought_match.group(1).replace('\\"', '"')
 
-        # Look for action pattern using non-greedy match
         action_match = re.search(r'"action"\s*:\s*"(.*?)"(?=\s*[,}])', raw_string, re.DOTALL)
         if action_match:
-            action = action_match.group(1)
-            action = action.replace('\\"', '"')
+            result["action"] = action_match.group(1).replace('\\"', '"')
 
-    except Exception as e:
-        print(f"Error parsing string: {e}")
-        return None, None
+        action_nl_match = re.search(r'"action_in_natural_language"\s*:\s*"(.*?)"(?=\s*[,}])', raw_string, re.DOTALL)
+        if action_nl_match:
+            result["action_nl"] = action_nl_match.group(1).replace('\\"', '"')
 
-    # Step 4: Truncated JSON recovery — try to extract action even if JSON is
-    # cut off mid-response (e.g., max_tokens exceeded mid-thought). Only use as
-    # last resort since the action value may be incomplete.
-    if action is None:
-        action_match = re.search(r'"action"\s*:\s*"([^"]*)', raw_string, re.DOTALL)
-        if action_match:
-            action = action_match.group(1).strip()
-            if action.endswith("')") or action.endswith('")'):
-                logger.warning(f"Recovered action from truncated JSON: {action}")
+        refined_goal_match = re.search(r'"refined_goal"\s*:\s*"(.*?)"(?=\s*[,}])', raw_string, re.DOTALL)
+        if refined_goal_match:
+            result["refined_goal"] = refined_goal_match.group(1).replace('\\"', '"')
 
-    return action, thought
+        if result.get("action"):
+            return result
+    except Exception:
+        pass
+
+    # Step 4: Truncated JSON recovery — try to extract action even if JSON is cut off
+    action_match = re.search(r'"action"\s*:\s*"([^"]*)', raw_string, re.DOTALL)
+    if action_match:
+        action = action_match.group(1).strip()
+        if action:
+            logger.warning(f"Recovered action from truncated JSON: {action}")
+            return {"action": action, "thought": None, "action_nl": None, "refined_goal": None}
+
+    return None
+
+
+def _extract_element_metadata(axtree: str, action: str) -> dict | None:
+    """Extract element metadata from axtree based on the bid referenced in action.
+
+    Args:
+        axtree: Accessibility tree string with format like '[42] [LINK] [Sony ...]'
+        action: Action string like "click('42')" or "type('42', 'text')"
+
+    Returns:
+        dict with keys: bid, tag, text or None if not found
+    """
+    if not axtree or not action:
+        return None
+    # Extract bid from action: click('42') -> 42, type('42', ...) -> 42
+    bid_match = re.search(r"\(['\"](\d+)['\"]", action)
+    if not bid_match:
+        return None
+    bid = bid_match.group(1)
+
+    # Find the element line in axtree: [42] [LINK] [Sony WH-1000XM5 ...]
+    line_pattern = re.compile(rf'\[{bid}\]\s+\[(\w+)\]\s+\[(.*?)\]')
+    m = line_pattern.search(axtree)
+    if m:
+        return {"bid": bid, "tag": m.group(1), "text": m.group(2)}
+    # Try simpler pattern: just [42] followed by anything
+    line_pattern2 = re.compile(rf'\[{bid}\]\s+\[(\w+)\]\s*(.*)')
+    m2 = line_pattern2.search(axtree)
+    if m2:
+        text = m2.group(2).strip()
+        if len(text) > 200:
+            text = text[:200] + "..."
+        return {"bid": bid, "tag": m2.group(1), "text": text}
+    return {"bid": bid, "tag": None, "text": None}
 
 
 def sanitize_action(action: str) -> str:
@@ -174,6 +229,7 @@ class SolverAgent(BaseAgent):
             temperature: float = 1.0,
             char_limit: int = -1,
             demo_mode: str = 'off',
+            use_som: bool = False,
     ):
         """
         Initialize the agent.
@@ -182,6 +238,7 @@ class SolverAgent(BaseAgent):
             model_name (str): The name of the model to use.
             temperature (float): The temperature to use for sampling.
             demo_mode (bool): Whether to run in demo mode.
+            use_som (bool): Whether to use Set-of-Mark visual grounding on screenshots.
         """
 
         # These are args that will be specified in the config.
@@ -192,6 +249,7 @@ class SolverAgent(BaseAgent):
         self.temperature = temperature
         self.char_limit = char_limit
         self.demo_mode = demo_mode
+        self.use_som = use_som
 
 
         base_url = base_url or os.getenv("OPENAI_BASE_URL")
@@ -212,14 +270,16 @@ class SolverAgent(BaseAgent):
         self.history: list[BrowserGymAgentStepData] = []
         self._recent_action_errors: list[tuple[str, str]] = []  # (action, error) for retry-loop detection
         self._max_same_action_retries = 3
+        self._refined_goal: str | None = None  # evolving task description
 
     def reset(self):
         self.history.clear()
         self._recent_action_errors.clear()
+        self._refined_goal = None
 
     def obs_preprocessor(self, obs: dict) -> dict:
 
-        return {
+        processed = {
             "chat_messages": obs["chat_messages"],
             "screenshot": obs["screenshot"],
             "goal_object": obs["goal_object"],
@@ -232,7 +292,18 @@ class SolverAgent(BaseAgent):
             "axtree_visible_only_txt": flatten_axtree_to_str(obs["axtree_object"], filter_visible_only=True, extra_properties=obs["extra_element_properties"]),
             "pruned_html": prune_html(flatten_dom_to_str(obs["dom_object"])),
             "extra_element_properties": obs["extra_element_properties"],
+            "axtree_object": obs["axtree_object"],  # Keep raw axtree for SoM processing
         }
+
+        # Phase 4: Apply Set-of-Mark visual grounding if enabled
+        if self.use_som:
+            try:
+                processed = process_observation(processed)
+                # SoM changes the screenshot to annotated version
+            except Exception as e:
+                logger.warning(f"SoM processing failed: {e}")
+
+        return processed
 
     def action_processor(self, action: str) -> str:
         """
@@ -268,6 +339,11 @@ class SolverAgent(BaseAgent):
             misc={}
         )
 
+        action_nl = None
+        refined_goal = None
+        element_metadata = None
+        page_url_before = obs.get("open_pages_urls", [None])[0] if obs.get("open_pages_urls") else None
+
         if oracle_action is None:
             # Use adaptive retry mechanism with character limit reduction
             response = self.make_llm_call_with_adaptive_retry(obs, current_step)
@@ -275,7 +351,13 @@ class SolverAgent(BaseAgent):
             raw_action = response.choices[0].message.content
             logger.info(f"Raw LLM response (first 500 chars): {raw_action[:500]}")
             logger.info(f"Raw LLM response repr (first 200 chars): {repr(raw_action[:200])}")
-            action, thought = extract_action_and_thought(raw_action)
+            parsed_response = _extract_full_response(raw_action)
+            if parsed_response is None:
+                raise ValueError(f"Could not parse action from LLM response. Raw (first 500 chars): {raw_action[:500]}")
+            action = parsed_response.get("action")
+            thought = parsed_response.get("thought")
+            action_nl = parsed_response.get("action_nl")
+            refined_goal = parsed_response.get("refined_goal")
             if action is None:
                 raise ValueError(f"Could not parse action from LLM response. Raw (first 500 chars): {raw_action[:500]}")
             current_step.misc["model_usage"] = response.usage.to_dict()
@@ -295,6 +377,16 @@ class SolverAgent(BaseAgent):
                 f"Action '{action}' does not start with a valid prefix. "
                 f"Valid prefixes: {VALID_ACTION_PREFIXES}"
             )
+
+        # Extract element metadata from axtree based on the action's bid
+        element_metadata = _extract_element_metadata(current_step.axtree, action)
+
+        # Update refined_goal tracking
+        if refined_goal:
+            self._refined_goal = refined_goal
+            logger.info(f"Refined goal updated: {refined_goal[:200]}")
+        if action_nl:
+            logger.info(f"Action (NL): {action_nl[:200]}")
 
         # Detect repeated action+error loops
         last_error = obs.get("last_action_error")
@@ -321,14 +413,12 @@ class SolverAgent(BaseAgent):
             recent_actions = [step.action for step in self.history[-5:]]
             unique_actions = set(recent_actions)
             if len(unique_actions) <= 2 and len(recent_actions) >= 4:
-                # Agent has used only 1-2 unique actions in the last 5 steps — likely stuck
                 logger.warning(
                     f"Stuck detection: only {len(unique_actions)} unique action(s) "
                     f"({unique_actions}) in last 5 steps. Model may be in a retry loop."
                 )
 
         # Hard stuck detection: same action N times consecutively (with or without errors)
-        # Catches silent loops like infinite scrolling or repeated clicks on static pages
         same_action_threshold = 6
         if len(self.history) >= same_action_threshold:
             recent_actions = [step.action for step in self.history[-same_action_threshold:]]
@@ -338,13 +428,20 @@ class SolverAgent(BaseAgent):
                     f"consecutive times. Task is stuck — forcing stop to prevent wasting steps."
                 )
 
-        print(f"Raw Action:\n {raw_action}")
+        logger.info(f"Raw Action:\n {raw_action}")
 
         current_step.action = action
         current_step.thought = thought
-        # Preserve last_action_error from obs so prompt builder can access historical errors
         current_step.last_action_error = obs.get("last_action_error")
-        current_step.misc.update({"thought": thought, "parsed_action": action, "raw_action": raw_action})
+        current_step.misc.update({
+            "thought": thought,
+            "parsed_action": action,
+            "raw_action": raw_action,
+            "action_nl": action_nl,
+            "refined_goal": refined_goal or self._refined_goal,
+            "element_metadata": element_metadata,
+            "page_url_before": page_url_before,
+        })
 
         self.history.append(current_step)
 
@@ -376,7 +473,9 @@ class SolverAgent(BaseAgent):
                     goal=obs["goal_object"][0]["text"],
                     current_step=current_step,
                     history=self.history,
-                    char_limit=effective_char_limit
+                    char_limit=effective_char_limit,
+                    refined_goal=self._refined_goal,
+                    use_som=self.use_som,
                 )['prompt']
 
                 print(f"Attempt {attempt+1}: Using char_limit={current_char_limit}")

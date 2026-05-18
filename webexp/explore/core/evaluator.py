@@ -61,20 +61,25 @@ def build_vision_eval_prompt(
     system_msg = dedent("""\
         You are an expert in evaluating the performance of a web navigation agent. The agent is designed to help a human user navigate a website to complete a task. Given the user's intent, the agent's action history, the final state of the webpage, and the agent's response to the user, your goal is to decide whether the agent's execution is successful or not.
 
-        There are three types of tasks:
-        1. Information seeking: The user wants to obtain certain information from the webpage, such as the information of a product, reviews, map info, comparison of map routes, etc. The bot's response must contain the information the user wants, or explicitly state that the information is not available. Otherwise, e.g. the bot encounters an exception and respond with the error content, the task is considered a failure. Besides, be careful about the sufficiency of the agent's actions. For example, when asked to list the top-searched items in a shop, the agent should order the items by the number of searches, and then return the top items. If the ordering action is missing, the task is likely to fail.
-        2. Site navigation: The user wants to navigate to a specific page. Carefully examine the bot's action history and the final state of the webpage to determine whether the bot successfully completes the task. No need to consider the bot's response.
-        3. Content modification: The user wants to modify the content of a webpage or configuration. Carefully examine the bot's action history and the final state of the webpage to determine whether the bot successfully completes the task. No need to consider the bot's response.
+        There are four types of tasks:
+        1. Transaction: The user wants to perform a transaction on the webpage, such as booking a ticket, ordering a product, etc. The bot should at least initiate the add-to-cart or checkout process. It is still a success if the bot has done actions like 'add to cart' or checkout and encounters the login page. If the bot fails to do so, the task is considered a failure.
+        2. Information seeking: The user wants to obtain certain information from the webpage, such as the information of a product, reviews, map info, comparison of map routes, etc. The bot's response must contain the information the user wants, or explicitly state that the information is not available. Otherwise, e.g. the bot encounters an exception and respond with the error content, the task is considered a failure. Besides, be careful about the sufficiency of the agent's actions. For example, when asked to list the top-searched items in a shop, the agent should order the items by the number of searches, and then return the top items. If the ordering action is missing, the task is likely to fail.
+        3. Site navigation: The user wants to navigate to a specific page. Carefully examine the bot's action history and the final state of the webpage to determine whether the bot successfully completes the task. No need to consider the bot's response.
+        4. Content modification: The user wants to modify the content of a webpage or configuration. Carefully examine the bot's action history and the final state of the webpage to determine whether the bot successfully completes the task. No need to consider the bot's response.
 
         *IMPORTANT*
-        Format your response into two lines as shown below:
+        Format your response into exactly four lines as shown below:
 
         Thoughts: <your thoughts and reasoning process>
-        Status: "success" or "failure"
+        Task Type: <transaction|information_seeking|site_navigation|content_modification>
+        Status: <"success" or "failure">
+        Failure Reason: <if status is failure, briefly explain why. If success, write "N/A">
         """
     )
     prompt = (
         f"User Intent: {intent}\n\n"
+        "Agent's final response to user:\n"
+        f"{response}\n\n"
         "Action History:\n"
         f"{last_actions}\n\n"
         "The final state of the webpage provided as an accessibility tree:\n"
@@ -128,34 +133,47 @@ class Evaluator:
     def evaluate(self, trajectory: Trajectory):
         action_history = ""
         for idx, step in enumerate(trajectory.steps):
-            action_history += f"{idx+1}: {step.action}\n"
-            
+            # Prefer natural language description if available
+            action_desc = step.action_nl or step.action
+            action_history += f"{idx+1}: {action_desc}\n"
+
         response = trajectory.response if trajectory.response else "None"
-        
+
         prompt, sys_msg = build_vision_eval_prompt(
             trajectory.goal, response, action_history, trajectory.steps[-1].observation["axtree_txt"]
         )
         img = trajectory.steps[-1].observation["screenshot"]
         msg_str, llm_response_obj = self.client.one_step_chat(text=prompt, image=img, system_msg=sys_msg)
-        
+
+        task_type = extract_content(msg_str, "Task Type:")
+        status = extract_content(msg_str, "Status:").replace('"', "")
+        failure_reason = extract_content(msg_str, "Failure Reason:")
+
         msg_dict = {
             "thoughts": extract_content(msg_str, "Thoughts:"),
-            "status": extract_content(msg_str, "Status:").replace('"', ""),
+            "task_type": task_type if task_type else "unknown",
+            "status": status,
+            "failure_reason": failure_reason if failure_reason and failure_reason.lower() != "n/a" else None,
         }
-        
+
         logger.info(f"Evaluating trajectory with goal: {trajectory.goal}")
+        logger.info(f"Task Type: {msg_dict['task_type']}, Status: {status}")
+        if msg_dict["failure_reason"]:
+            logger.info(f"Failure Reason: {msg_dict['failure_reason']}")
         logger.info(f"Model Response: {msg_str}")
-        
+
         trajectory.success = msg_dict["status"].lower() == "success"
         trajectory.reward = 1.0 if trajectory.success else 0.0
 
         evaluation_info = {
             "output": msg_dict,
+            "task_type": msg_dict["task_type"],
+            "failure_reason": msg_dict["failure_reason"],
             "reward": trajectory.reward,
             "model_usage": llm_response_obj.usage.to_dict()
         }
 
         if trajectory.misc is None:
             trajectory.misc = {}
-        
+
         trajectory.misc["evaluation_info"] = evaluation_info

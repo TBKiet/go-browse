@@ -18,12 +18,16 @@ class SolverPromptBuilder(BasePromptBuilder):
             messages.append({"text": obs["message"]})
         return messages
 
-    def format_thought_and_action(self, thought: str, action: str) -> str:
+    def format_thought_and_action(self, thought: str, action: str, action_nl: str | None = None, refined_goal: str | None = None) -> str:
         d = {}
         if thought:
             d['thought'] = thought
         if action:
             d['action'] = action
+        if action_nl:
+            d['action_in_natural_language'] = action_nl
+        if refined_goal:
+            d['refined_goal'] = refined_goal
         return json.dumps(d)
 
     def trim_axtree(self, axtree: str, num_chars_overflow: int) -> str:
@@ -38,40 +42,48 @@ class SolverPromptBuilder(BasePromptBuilder):
         return messages
 
 
-    def build_messages(self, goal: str, current_step: BrowserGymAgentStepData, history: list[BrowserGymAgentStepData], char_limit: int=-1) -> dict:
+    def build_messages(self, goal: str, current_step: BrowserGymAgentStepData, history: list[BrowserGymAgentStepData], char_limit: int=-1, refined_goal: str | None = None, use_som: bool = False) -> dict:
         past_thoughts = [step.thought for step in history]
         past_actions = [step.misc['parsed_action'] if 'parsed_action' in step.misc else step.action for step in history]
         past_errors = [step.last_action_error for step in history]
+        past_action_nls = [step.misc.get('action_nl') if step.misc else None for step in history]
+        past_refined_goals = [step.misc.get('refined_goal') if step.misc else None for step in history]
 
         axtree = current_step.axtree
         last_action_error = current_step.last_action_error
         completion_thought = current_step.thought
         completion_action = current_step.misc['parsed_action'] if current_step.misc and 'parsed_action' in current_step.misc else current_step.action
+        completion_action_nl = current_step.misc.get('action_nl') if current_step.misc else None
+        completion_refined_goal = current_step.misc.get('refined_goal') if current_step.misc else None
 
         add_completion = completion_thought or completion_action
 
+        common = dict(
+            refined_goal=refined_goal,
+            past_refined_goals=past_refined_goals,
+            completion_action_nl=completion_action_nl,
+            completion_refined_goal=completion_refined_goal,
+            use_som=use_som,
+        )
+
         messages = self._build_messages(
-            goal,
-            past_thoughts,
-            past_actions,
-            past_errors,
-            axtree,
-            last_action_error,
-            completion_thought,
-            completion_action
+            goal, past_thoughts, past_actions, past_errors,
+            axtree, last_action_error, completion_thought, completion_action,
+            **common,
         )
         curr_char_count = self.count_message_chars(messages['prompt'] + (messages['completion'] if add_completion else []))
         if char_limit > 0 and curr_char_count > char_limit:
             past_thoughts, past_actions, past_errors = self.trim_past_thoughts_and_actions(past_thoughts, past_actions, past_errors, max_allowed=8)
+            if past_refined_goals:
+                past_refined_goals = past_refined_goals[-8:]
             messages = self._build_messages(
-                goal,
-                past_thoughts,
-                past_actions,
-                past_errors,
-                axtree,
-                last_action_error,
-                completion_thought,
-                completion_action
+                goal, past_thoughts, past_actions, past_errors,
+                axtree, last_action_error, completion_thought, completion_action,
+                refined_goal=refined_goal,
+                past_refined_goals=past_refined_goals,
+                completion_action_nl=completion_action_nl,
+                completion_refined_goal=completion_refined_goal,
+                use_som=use_som,
             )
 
             curr_char_count = self.count_message_chars(messages['prompt'] + (messages['completion'] if add_completion else []))
@@ -79,14 +91,13 @@ class SolverPromptBuilder(BasePromptBuilder):
             if remaining_overflow > 0:
                 axtree = self.trim_axtree(axtree, remaining_overflow)
                 messages = self._build_messages(
-                    goal,
-                    past_thoughts,
-                    past_actions,
-                    past_errors,
-                    axtree,
-                    last_action_error,
-                    completion_thought,
-                    completion_action
+                    goal, past_thoughts, past_actions, past_errors,
+                    axtree, last_action_error, completion_thought, completion_action,
+                    refined_goal=refined_goal,
+                    past_refined_goals=past_refined_goals,
+                    completion_action_nl=completion_action_nl,
+                    completion_refined_goal=completion_refined_goal,
+                    use_som=use_som,
                 )
 
         return {k : flatten_messages(v) for k, v in messages.items() if v}
@@ -114,24 +125,34 @@ class SolverPromptBuilder(BasePromptBuilder):
         axtree: str = "",
         last_action_error: str | None = None,
         completion_thought: str | None = None,
-        completion_action: str | None = None
+        completion_action: str | None = None,
+        refined_goal: str | None = None,
+        past_refined_goals: list[str | None] | None = None,
+        completion_action_nl: str | None = None,
+        completion_refined_goal: str | None = None,
+        use_som: bool = False,
     ):
         if past_errors is None:
             past_errors = [None] * len(thoughts)
 
-        system_messages = {"role": "system", "content": [self.system_message()]}
+        system_messages = {"role": "system", "content": [self.system_message(use_som=use_som)]}
 
-        # Build action history with error annotations
         action_history = self.action_history_with_errors(thoughts, actions, past_errors)
+
+        user_content = [
+            self.goal_message(goal),
+            self.axtree_message(axtree),
+            self.action_space_message(self.action_set),
+            action_history,
+        ]
+
+        # Include evolving refined goal context if available
+        if refined_goal:
+            user_content.append(self.refined_goal_message(refined_goal))
 
         user_messages = {
             "role": "user",
-            "content": [
-                self.goal_message(goal),
-                self.axtree_message(axtree),
-                self.action_space_message(self.action_set),
-                action_history,
-            ]
+            "content": user_content,
         }
 
         # Detect repeated failures and inject escalated warnings
@@ -140,7 +161,6 @@ class SolverPromptBuilder(BasePromptBuilder):
         if consecutive_same_failures >= 2:
             user_messages["content"].append(self.strategy_change_message(consecutive_same_failures, last_action, last_action_error))
         else:
-            # Detect silent stuck: same action repeated without errors (e.g., infinite scrolling)
             silent_same_count = self._count_consecutive_same_actions(actions)
             if silent_same_count >= 4:
                 user_messages["content"].append(self.silent_stuck_message(silent_same_count, last_action))
@@ -155,7 +175,7 @@ class SolverPromptBuilder(BasePromptBuilder):
         if completion_thought or completion_action:
             assistant_messages = {
                 "role": "assistant",
-                "content": [self.completion_message(completion_thought, completion_action)]
+                "content": [self.completion_message(completion_thought, completion_action, completion_action_nl, completion_refined_goal)]
             }
             output["completion"] = [assistant_messages]
 
@@ -317,18 +337,45 @@ class SolverPromptBuilder(BasePromptBuilder):
                 "- If the element is not interactable, inspect nearby elements instead"
             )
 
-    def system_message(self):
+    def system_message(self, use_som: bool = False):
+        som_note = ""
+        if use_som:
+            som_note = dedent("""\
+
+                ## Set-of-Mark Visual Grounding
+                The screenshot has colored numbered tags overlaid on interactive elements.
+                Each tag number corresponds to the [bid] value in the accessibility tree.
+                For example, a blue "42" tag on a button in the screenshot means you can
+                click it with click('42'). Use the visual tags to locate elements.
+
+                When choosing which element to interact with:
+                - Look at the screenshot to understand the page layout
+                - Find the numbered tag on the element you want to interact with
+                - Match that number to the [bid] in the accessibility tree
+                - Use that bid in your action: click('42'), type('7', 'text'), etc.
+                """)
+
         return  {
                 "type": "text",
                 "text": dedent("""\
                     # Instructions
                     You are a UI Assistant, your goal is to help the user perform tasks using a web browser.
                     Review the instructions from the user, the current state of the page and all other information to find the best possible next action to accomplish your goal. Your answer will be interpreted and executed by a program, make sure to follow the formatting instructions.
+                    """
+                ) + som_note + dedent("""\
 
-                    FORMAT: Your entire response must be a single JSON object: {"thought": "...", "action": "..."}
+                    FORMAT: Your entire response must be a single JSON object with these keys:
+                    {
+                      "thought": "<your step-by-step reasoning about what to do next>",
+                      "action": "<the single action to execute>",
+                      "action_in_natural_language": "<describe this action in plain English, as if telling a human what you are doing>",
+                      "refined_goal": "<updated task description incorporating new details learned from the current page>"
+                    }
                     - Do NOT output any text, explanation, or markdown outside the JSON.
-                    - All reasoning goes inside the "thought" key.
-                    - Only ONE action in the "action" key.
+                    - The "thought" key contains all your reasoning.
+                    - The "action" key must contain exactly ONE action.
+                    - The "action_in_natural_language" key should describe the action in human-readable form (e.g., "Click on the 'Add to Cart' button for the Sony headphones").
+                    - The "refined_goal" key should update the overall task description with new constraints/details you've discovered (e.g., budget, product name, dates). If the task hasn't changed, repeat the current goal.
                     """
                 )
         }
@@ -339,6 +386,17 @@ class SolverPromptBuilder(BasePromptBuilder):
                 "text": (
                     "# Goal\n"
                     f"{goal}"
+                )
+        }
+
+    def refined_goal_message(self, refined_goal: str):
+        return  {
+                "type": "text",
+                "text": (
+                    "# Current Task Understanding (evolving)\n"
+                    f"{refined_goal}\n\n"
+                    "As you learn more details (specific products, prices, dates, etc.), "
+                    "update the task description in your refined_goal output."
                 )
         }
 
@@ -356,9 +414,9 @@ class SolverPromptBuilder(BasePromptBuilder):
 
     def cot_examples(self) -> list[dict]:
         return [
-            {"thought": "I now need to click on the Submit button to send the form. I will use the click action on the button, which has bid 12.", "action": "click('12')"},
-            {"thought": "I found the information requested by the user, I will send it to the chat.", "action": "send_msg_to_user('The price for a 15 inch laptop is 1499 USD.')"},
-            {"thought": "I have finished navigating to the Products page. I will inform the user that I have completed the task.", "action": "send_msg_to_user('I have finished navigating to the Products page.')"},
+            {"thought": "I now need to click on the Submit button to send the form. I will use the click action on the button, which has bid 12.", "action": "click('12')", "action_in_natural_language": "Click on the Submit button to send the form", "refined_goal": "Submit the contact form with the provided information"},
+            {"thought": "I found the information requested by the user, I will send it to the chat.", "action": "send_msg_to_user('The price for a 15 inch laptop is 1499 USD.')", "action_in_natural_language": "Send the price information to the user", "refined_goal": "Find and report the price of a 15 inch laptop"},
+            {"thought": "I have finished navigating to the Products page. I will inform the user that I have completed the task.", "action": "send_msg_to_user('I have finished navigating to the Products page.')", "action_in_natural_language": "Confirm to the user that navigation to Products page is complete", "refined_goal": "Navigate to the Products page"},
         ]
 
 
@@ -418,10 +476,10 @@ class SolverPromptBuilder(BasePromptBuilder):
         return {"type": "text", "text": base_text}
 
 
-    def completion_message(self, completion_thought: str, completion_action: str):
+    def completion_message(self, completion_thought: str, completion_action: str, completion_action_nl: str | None = None, completion_refined_goal: str | None = None):
         return  {
                 "type": "text",
-                "text": f"{self.format_thought_and_action(completion_thought, completion_action)}"
+                "text": f"{self.format_thought_and_action(completion_thought, completion_action, completion_action_nl, completion_refined_goal)}"
         }
 
 

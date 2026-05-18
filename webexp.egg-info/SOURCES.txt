@@ -1,6 +1,8 @@
 LICENSE
 README.md
 setup.py
+tests/test_parsing.py
+tests/test_semantic_trajectory.py
 webexp/__init__.py
 webexp.egg-info/PKG-INFO
 webexp.egg-info/SOURCES.txt
@@ -8,13 +10,18 @@ webexp.egg-info/dependency_links.txt
 webexp.egg-info/top_level.txt
 webexp/agents/__init__.py
 webexp/agents/base_agent.py
+webexp/agents/captcha_detection_agent.py
 webexp/agents/nav_explorer_agent.py
 webexp/agents/page_explorer_agent.py
 webexp/agents/run_episode.py
 webexp/agents/solver_agent.py
+webexp/agents/task_summarization_agent.py
 webexp/agents/trajectory_data.py
 webexp/agents/prompt_builders/__init__.py
 webexp/agents/prompt_builders/nav_explorer_prompt_builder.py
 webexp/agents/prompt_builders/page_explorer_prompt_builder.py
 webexp/agents/prompt_builders/solver_prompt_builder.py
 webexp/explore/__init__.py
+webexp/explore/grounding/__init__.py
+webexp/explore/grounding/set_of_mark.py
+webexp/explore/grounding/som_processor.py

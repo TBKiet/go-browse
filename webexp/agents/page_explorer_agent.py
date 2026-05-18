@@ -15,11 +15,11 @@ def add_tasks_to_dataset(*tasks: str):
     [MOD] for content modification tasks, configuration changes, or anything that modifies the state of the webpage.
     You can add multiple tags to a single task string if it is a combination of different types of tasks.
     For example, you can use [INFO][NAV] for a task that requires both information seeking and navigation.
-    
+
     Examples:
         add_tasks_to_dataset('[MOD] Add the Apple iPhone 13 to the cart.', '[MOD] Leave a review for iPhone 13 saying that I loved it.')
         add_tasks_to_dataset('[INFO] List the best-selling product for first quarter of 2023.')
-        add_tasks_to_dataset('[INFO] Compare the driving and walking times from University of Washington to Amazon's headquarters in Seattle.')
+        add_tasks_to_dataset('[INFO] Compare the driving and walking times from University of Washington to Amazon\'s headquarters in Seattle.')
         add_tasks_to_dataset('[NAV] Navigate to the product page for the Apple iPhone 13.')
     """
     TASK_COLLECTOR.extend(tasks)
@@ -30,7 +30,7 @@ class PageExplorerAgent(SolverAgent):
     """
     Agent used to propose exploration tasks for a web page.
     """
-    
+
     def __init__(
             self,
             model_id: str,
@@ -39,11 +39,12 @@ class PageExplorerAgent(SolverAgent):
             temperature: float = 1.0,
             char_limit: int = -1,
             demo_mode: str = 'off',
+            use_som: bool = False,
     ):
         """
         Initialize the agent.
         """
-        super().__init__(model_id=model_id, base_url=base_url, api_key=api_key, temperature=temperature, char_limit=char_limit, demo_mode=demo_mode)
+        super().__init__(model_id=model_id, base_url=base_url, api_key=api_key, temperature=temperature, char_limit=char_limit, demo_mode=demo_mode, use_som=use_som)
 
         self.action_set = HighLevelActionSet(
             subsets=["chat", "bid", "infeas", "nav", "tab", "custom"],
@@ -63,34 +64,65 @@ class PageExplorerAgent(SolverAgent):
 
     def get_proposed_tasks(self) -> list[str]:
         return TASK_COLLECTOR.copy()
-    
+
     @property
     def goal_str(self) -> str:
         return dedent("""\
-            I am trying to collect a dataset to train a better web browser agent that can perform actions for users in a web browser. For this, I need to first collect tasks that are feasible to perform on the current web page. 
+            I am trying to collect a dataset to train a better web browser agent that can perform actions for users in a web browser. For this, I need to first collect tasks that are feasible to perform on the current web page.
             The tasks should be concrete (e.g., on an amazon product page for product X, an appropriate task could be "Leave a positive review for X" or on a maps website a task could be "Show me driving directions from X to Y." where X and Y are specific locations).
             You may explore by performing actions on this web page if that helps to determine concrete tasks that are feasible.
 
             Find the tasks that are possible to perform on the current web page itself, without have to navigate to other links/urls. Though, you may find it helpful to navigate through menus on this page to get a better idea of what types of tasks are feasible. If you accidentally go to a new url while trying to navigate items on the page, you can go back to the previous page using the `go_back` function.
 
+            ## Task Types
             Tasks are usually of three types:
-            1. Information seeking: The user wants to obtain certain information from the webpage, such as the information of a product, reviews, map info, comparison of map routes, etc. 
+            1. Information seeking: The user wants to obtain certain information from the webpage, such as the information of a product, reviews, map info, comparison of map routes, etc.
             2. Site navigation: The user wants to navigate to a specific page.
             3. Content modification: The user wants to modify the content of a webpage or configuration.
 
-            Be as specific as you can while creating tasks. The web agent may start from a different web page when asked to complete the task and so may not have the current page context to understand the task. So, for example, avoid creating generic tasks like "Add item to cart" or "Print receipt for this order." Instead you want to create specific tasks like "Add a Sony PS5 to cart" or "Print a receipt for Martha Jone's order of the Nike Velocity Sweatpants from May 21, 2021"
+            ## Task Quality Requirements
+            Every task MUST follow this format: "<action verb> <specific details with constraints> on <website>"
+            - Action verbs: Buy, Book, Find, Check, Choose, Show me, Search, Browse, Get, Compare, View, Give me, Add to cart, Reserve, Schedule, etc.
+            - Include concrete mock-up details: product names, prices, budgets, dates, locations, ratings, quantities, sizes, colors, etc.
+            - End with "on <website_name>" to indicate the domain.
 
-            I recommend the following order to collecting tasks: 
+            Examples of GOOD tasks:
+            - "Find a Sony WH-1000XM5 wireless headphone under $350 with 4+ star rating on Amazon"
+            - "Book a 60-minute deep tissue massage appointment for next Tuesday at 3pm on Yelp"
+            - "Add a Large Pepperoni Pizza and 2-liter Coke to cart on Dominos"
+            - "Check the driving distance and estimated time from Seattle to Portland on Google Maps"
+            - "Leave a 4-star review saying 'Great build quality but battery life could be better' for the MacBook Pro on Amazon"
+            - "Find the customer service phone number for order #12345 on eBay"
+
+            Examples of BAD tasks (too vague, no constraints):
+            - "Add item to cart" -- which item? which website?
+            - "Find a product" -- which product? any budget? any rating?
+            - "Navigate to the home page" -- too trivial, no user value
+
+            ## Task Tags
+            Tag each task by type:
+            - [INFO] for information seeking tasks
+            - [NAV] for navigation tasks
+            - [MOD] for content modification tasks
+            - Multiple tags allowed: [INFO][NAV] for tasks requiring both
+
+            ## Exploration Strategy
+            Be as specific as you can while creating tasks. The web agent may start from a different web page when asked to complete the task and so may not have the current page context to understand the task.
+
+            I recommend the following order to collecting tasks:
             1. First look for information seeking/extraction tasks that can be answered simply using information on the current page, requiring no additional actions.
             2. Collect navigation tasks that require navigating to another webpage from this current page. You may click to links to try finding other interesting pages to collect tasks from. But if you do navigate to another page, instead of collecting tasks on that page, make sure to navigate back to the previous page using `go_back`. We will collect tasks from these new pages later. When collecting navigation tasks, prioritize those that would likely have interesting/useful tasks on them over ones that likely won't give many useful tasks to collect.
             3. Finally, you can try to find content modification tasks on the current page that require performing actions on the current page itself.
 
-            As you are exploring the page, you may find it helpful to click on buttons, links, and other elements on the page to see if they reveal any additional information or options that could lead to new tasks. You can also hover over elements to see if they provide any tooltips or additional context.         
-            
+            ## Verification
+            Before adding a task, try performing the first action to verify it is actually feasible. For example, if you propose "Find a Sony WH-1000XM5 on Amazon", first try clicking the search bar and typing "Sony WH-1000XM5" to verify the search works. Only add tasks you have verified are feasible.
+
+            As you are exploring, you may find it helpful to click on buttons, links, and other elements on the page to see if they reveal any additional information or options that could lead to new tasks. You can also hover over elements to see if they provide any tooltips or additional context.
+
             **Important**:
             When collecting tasks, focus more on the common tasks that a typical user of this webpage would want to perform. Avoid niche tasks that are unlikely to be relevant to the typical user of this website.
             For most common styles of tasks, it may be useful to include a few variants or related tasks to help the web agent learn frequently used skills.
-          
+
             As you are exploring, you can add tasks to the dataset using the `add_tasks_to_dataset` function.
 
             When you are done exploring, send a message to the user using `send_msg_to_user` confirming this."""
