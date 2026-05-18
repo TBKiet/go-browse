@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Go-Browse Semantic Trajectory — Updated Explore Flow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #79c0ff;
+    --green: #3fb950;
+    --orange: #d2991d;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --pink: #f778ba;
+    --code-bg: #1c2128;
+    --radius: 8px;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.7;
+    max-width: 1100px; margin: 0 auto; padding: 40px 24px 120px;
+  }
+  h1 { font-size: 2.2rem; margin-bottom: 6px; color: #f0f6fc; border-bottom: 2px solid var(--border); padding-bottom: 16px; }
+  h1 .sub { display: block; font-size: 1rem; color: var(--text-muted); font-weight: 400; margin-top: 4px; }
+  h2 { font-size: 1.55rem; margin-top: 48px; margin-bottom: 16px; color: var(--accent2); border-left: 4px solid var(--accent); padding-left: 14px; }
+  h3 { font-size: 1.2rem; margin-top: 32px; margin-bottom: 10px; color: #e6edf3; }
+  h4 { font-size: 1.05rem; margin-top: 24px; margin-bottom: 8px; color: var(--orange); }
+  p { margin-bottom: 14px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono); font-size: 0.88em;
+    background: var(--code-bg); padding: 2px 6px; border-radius: 4px;
+    color: var(--pink);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 20px; overflow-x: auto; margin: 14px 0; font-size: 0.85rem;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+  .module {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 24px; margin: 18px 0;
+  }
+  .module h3 { margin-top: 0; font-size: 1.15rem; }
+  .io-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+  .io-box {
+    background: var(--code-bg); border-radius: 6px; padding: 14px 16px;
+  }
+  .io-box .label { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .io-box .label.in  { color: var(--green); }
+  .io-box .label.out { color: var(--purple); }
+  .io-box ul { padding-left: 18px; margin: 0; }
+  .io-box li { margin-bottom: 4px; font-size: 0.92rem; }
+  .logic { margin-top: 14px; }
+  .logic .label { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--orange); margin-bottom: 6px; }
+  .tag {
+    display: inline-block; padding: 2px 10px; border-radius: 12px;
+    font-size: 0.76rem; font-weight: 600; margin-right: 6px; margin-bottom: 4px;
+  }
+  .tag.oop { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .tag.algo { background: rgba(63,185,80,0.15); color: var(--green); }
+  .tag.data { background: rgba(188,140,255,0.15); color: var(--purple); }
+  .tag.file { background: rgba(210,153,29,0.15); color: var(--orange); }
+  .tag.new { background: rgba(247,119,186,0.15); color: var(--pink); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.92rem; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--accent2); font-weight: 600; background: var(--surface); }
+  tr:hover { background: rgba(88,166,255,0.04); }
+  blockquote {
+    border-left: 3px solid var(--accent); padding: 10px 18px; margin: 16px 0;
+    background: rgba(88,166,255,0.06); border-radius: 0 var(--radius) var(--radius) 0;
+    color: var(--text-muted); font-style: italic;
+  }
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 28px; margin: 24px 0; }
+  .toc h3 { margin-top: 0; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin-bottom: 6px; }
+  .toc a { color: var(--accent2); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+  .note { background: rgba(210,153,29,0.08); border: 1px solid rgba(210,153,29,0.25); border-radius: var(--radius); padding: 14px 18px; margin: 14px 0; font-size: 0.92rem; }
+  .note strong { color: var(--orange); }
+  .callout { background: rgba(88,166,255,0.08); border: 1px solid rgba(88,166,255,0.25); border-radius: var(--radius); padding: 14px 18px; margin: 14px 0; }
+  .callout strong { color: var(--accent); }
+  .new-badge {
+    display: inline-block; background: var(--pink); color: #000; font-size: 0.7rem;
+    font-weight: 700; padding: 1px 7px; border-radius: 4px; margin-left: 6px;
+    vertical-align: middle; text-transform: uppercase;
+  }
+  .enhanced-badge {
+    display: inline-block; background: var(--orange); color: #000; font-size: 0.7rem;
+    font-weight: 700; padding: 1px 7px; border-radius: 4px; margin-left: 6px;
+    vertical-align: middle; text-transform: uppercase;
+  }
+  .flow-step {
+    border-left: 3px solid var(--accent); padding-left: 16px; margin: 12px 0 12px 8px;
+  }
+  .flow-step.new { border-left-color: var(--pink); }
+  .flow-step.enhanced { border-left-color: var(--orange); }
+</style>
+</head>
+<body>
+
+<h1>
+  Go-Browse Semantic Trajectory
+  <span class="sub">Updated Explore Flow — Multi-Agent Pipeline with Semantic Grounding, Evolving Intent &amp; Post-Hoc Verification</span>
+</h1>
+
+<!-- ── TOC ──────────────────────────────────────────────────────────────── -->
+<div class="toc">
+<h3>Table of Contents</h3>
+<ol>
+  <li><a href="#overview">Overview: What Changed &amp; Why</a></li>
+  <li><a href="#flow-full">The Full Semantic Explore Flow</a></li>
+  <li><a href="#phase0">Phase 0: CAPTCHA Detection <span class="new-badge">NEW</span></a></li>
+  <li><a href="#phase1">Phase 1: Enhanced Task Proposal <span class="enhanced-badge">ENHANCED</span></a></li>
+  <li><a href="#phase2">Phase 2: Feasibility Check</a></li>
+  <li><a href="#phase3">Phase 3: Semantic Trajectory Generation <span class="new-badge">CORE</span></a>
+    <ol>
+      <li><a href="#som">Set-of-Mark Visual Grounding</a></li>
+      <li><a href="#evolving-goal">Evolving Task Refinement (refined_goal)</a></li>
+      <li><a href="#action-nl">Natural Language Action Descriptions</a></li>
+      <li><a href="#element-metadata">Element Metadata Extraction</a></li>
+      <li><a href="#url-tracking">Per-Step URL Tracking</a></li>
+      <li><a href="#stuck-detection">Enhanced Stuck Detection</a></li>
+    </ol>
+  </li>
+  <li><a href="#phase4">Phase 4: Enhanced Evaluation <span class="enhanced-badge">ENHANCED</span></a></li>
+  <li><a href="#phase5">Phase 5: Task Summarization <span class="new-badge">NEW</span></a></li>
+  <li><a href="#data-model">Data Model: Before vs After</a></li>
+  <li><a href="#agent-pipeline">Agent Pipeline Comparison</a></li>
+  <li><a href="#files">File Map — What Was Created &amp; Modified</a></li>
+</ol>
+</div>
+
+<!-- ── OVERVIEW ──────────────────────────────────────────────────────────── -->
+<h2 id="overview">1. Overview: What Changed &amp; Why</h2>
+
+<p>
+The Go-Browse framework's Explore flow has been upgraded to produce <strong>semantic trajectories</strong> —
+trajectories where every action carries rich natural language descriptions, the task intent
+<strong>evolves</strong> as the agent learns more about the page, elements are <strong>visually grounded</strong>
+via Set-of-Mark, and post-hoc verification classifies task types with detailed reasoning.
+</p>
+
+<p>The upgrade was driven by analysis of <strong>Explorer (ACL 2025)</strong>, which demonstrated that
+semantically rich trajectories produce better training data for multimodal web agents. The
+implementation bridges the gap between Go-Browse's multi-node graph exploration and Explorer's
+deep single-site semantic trajectory synthesis.</p>
+
+<div class="callout">
+<strong>Key Insight:</strong> The original Go-Browse produced "raw" trajectories — just action strings
+and observations. The upgraded pipeline produces <strong>self-describing trajectories</strong> where
+every step documents <em>what</em> was done (natural language), <em>why</em> (reasoning),
+<em>where</em> (bounding box + URL), and <em>what the agent now understands the task to be</em>
+(refined goal). This makes the data directly usable for training vision-language-action models.
+</div>
+
+<!-- ── TIMELINE ──────────────────────────────────────────────────────────── -->
+<h3>1.1 Improvement Map</h3>
+
+<table>
+<tr><th>Capability</th><th>Before</th><th>After</th></tr>
+<tr>
+  <td><strong>Action representation</strong></td>
+  <td><code>click('bid_42')</code> only</td>
+  <td>Raw action + NL description + element metadata + bounding box</td>
+</tr>
+<tr>
+  <td><strong>Task intent</strong></td>
+  <td>Static — proposed once, never updated</td>
+  <td><strong>Evolving</strong> — refined each step as agent learns</td>
+</tr>
+<tr>
+  <td><strong>Visual grounding</strong></td>
+  <td>None (raw screenshot)</td>
+  <td><strong>Set-of-Mark</strong> — numbered tags overlay on screenshots</td>
+</tr>
+<tr>
+  <td><strong>Evaluation</strong></td>
+  <td>Binary success/failure</td>
+  <td>Task type classification + failure reason</td>
+</tr>
+<tr>
+  <td><strong>Post-trajectory</strong></td>
+  <td>None</td>
+  <td><strong>Task Summarization</strong> — clean description from action history</td>
+</tr>
+<tr>
+  <td><strong>CAPTCHA handling</strong></td>
+  <td>None (wasted LLM calls)</td>
+  <td><strong>Auto-detect & skip</strong> before exploring node</td>
+</tr>
+<tr>
+  <td><strong>Stuck detection</strong></td>
+  <td>Basic action repetition</td>
+  <td>Multi-level: action+error loop detection + hard stuck detection</td>
+</tr>
+<tr>
+  <td><strong>URL tracking</strong></td>
+  <td>Not per-step</td>
+  <td><code>page_url_before</code> + <code>page_url_after</code> per step</td>
+</tr>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- FULL FLOW                                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="flow-full">2. The Full Semantic Explore Flow</h2>
+
+<div style="background:#0d1117; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto;">
+<pre style="background:none; border:none; color:#c9d1d9; text-align:left; font-size:0.8rem; line-height:1.9;">
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│              GO-BROWSE SEMANTIC EXPLORE FLOW (web_explore.py)                     │
+│                                                                                  │
+│  INPUT: root_url, allowlist, denylist, agent configs                             │
+│                                                                                  │
+│  1. INIT: Graph(root_url), env = BrowserEnv, evaluator, captcha_detector <span class="new-badge" style="font-size:0.65rem">NEW</span>    │
+│                                                                                  │
+│  2. WHILE unexplored_nodes AND count < max_nodes:                                │
+│     │                                                                            │
+│     │  curr_node = graph.get_next_node()   ←── FIFO (BFS order)                 │
+│     │                                                                            │
+│     │  ╔══════════════════════════════════════════════════════════════════════╗  │
+│     │  ║  PHASE 0: CAPTCHA DETECTION <span class="new-badge" style="font-size:0.7rem">NEW</span>                                  ║  │
+│     │  ║  ┌─────────────────────────┐                                         ║  │
+│     │  ║  │ CaptchaDetectionAgent   │  GPT-4V checks screenshot               ║  │
+│     │  ║  │                         │  → "yes" → skip node, continue BFS     ║  │
+│     │  ║  │ is_captcha(screenshot)  │  → "no"  → proceed to exploration      ║  │
+│     │  ║  └─────────────────────────┘                                         ║  │
+│     │  ╚══════════════════════════════════════════════════════════════════════╝  │
+│     │                                                                            │
+│     │  ╔══════════════════════════════════════════════════════════════════════╗  │
+│     │  ║  PHASE 1: ENHANCED TASK PROPOSAL <span class="enhanced-badge" style="font-size:0.7rem">ENHANCED</span>                        ║  │
+│     │  ║  ┌──────────────────────┐  ┌──────────────────────┐                  ║  │
+│     │  ║  │ PageExplorerAgent    │  │ NavExplorerAgent     │                  ║  │
+│     │  ║  │ (GPT-4o / Claude)    │  │ (GPT-4o / Claude)    │                  ║  │
+│     │  ║  │                      │  │                      │                  ║  │
+│     │  ║  │ Explores page →      │  │ Clicks links →       │                  ║  │
+│     │  ║  │ proposes [INFO]/[MOD]│  │ proposes [NAV] tasks │                  ║  │
+│     │  ║  │ /[NAV] tasks with:   │  │ with format:         │                  ║  │
+│     │  ║  │ • Standard format    │  │ • Standard format    │                  ║  │
+│     │  ║  │ • Concrete details   │  │ • Specific page name │                  ║  │
+│     │  ║  │ • Constraints        │  │ • Website domain     │                  ║  │
+│     │  ║  │ • Website suffix     │  │                      │                  ║  │
+│     │  ║  │ • SoM support <span class="new-badge" style="font-size:0.65rem">NEW</span>    │  │ • SoM support <span class="new-badge" style="font-size:0.65rem">NEW</span>    │                  ║  │
+│     │  ║  └──────────┬───────────┘  └──────────┬───────────┘                  ║  │
+│     │  ║             ↓                         ↓                              ║  │
+│     │  ║       run_episode()             run_episode()                         ║  │
+│     │  ╚══════════════════════════════════════════════════════════════════════╝  │
+│     │                                                                            │
+│     │  ╔══════════════════════════════════════════════════════════════════════╗  │
+│     │  ║  PHASE 2: FEASIBILITY CHECK (unchanged structurally)                ║  │
+│     │  ║  SolverAgent attempts each task → Evaluator judges → feasible?      ║  │
+│     │  ║  Limits: max_feasible_page_tasks_per_node, max_feasible_nav_tasks   ║  │
+│     │  ╚══════════════════════════════════════════════════════════════════════╝  │
+│     │                                                                            │
+│     │  ╔══════════════════════════════════════════════════════════════════════╗  │
+│     │  ║  PHASE 3: SEMANTIC TRAJECTORY GENERATION <span class="new-badge" style="font-size:0.7rem">CORE NEW</span>                 ║  │
+│     │  ║                                                                      ║  │
+│     │  ║  FOR each feasible task:                                             ║  │
+│     │  ║    FOR each solver variant (prefixed / non-prefixed):                ║  │
+│     │  ║                                                                      ║  │
+│     │  ║      ┌─────────────────────────────────────────────────────────┐    ║  │
+│     │  ║      │              SOLVER AGENT — PER-STEP CYCLE               │    ║  │
+│     │  ║      │                                                         │    ║  │
+│     │  ║      │  1. obs_preprocessor():                                  │    ║  │
+│     │  ║      │     ├─ Flatten axtree, prune HTML, extract URLs          │    ║  │
+│     │  ║      │     └─ <strong>Apply Set-of-Mark overlay</strong> <span class="new-badge" style="font-size:0.65rem">NEW</span>                      │    ║  │
+│     │  ║      │        └─ Numbered tags on interactive elements           │    ║  │
+│     │  ║      │                                                         │    ║  │
+│     │  ║      │  2. Prompt Builder:                                       │    ║  │
+│     │  ║      │     ├─ System prompt + goal + SoM instructions <span class="new-badge" style="font-size:0.65rem">NEW</span>         │    ║  │
+│     │  ║      │     ├─ <strong>Evolving refined_goal context</strong> <span class="new-badge" style="font-size:0.65rem">NEW</span>                  │    ║  │
+│     │  ║      │     ├─ Action history (with NL descriptions)              │    ║  │
+│     │  ║      │     └─ Error recovery advice <span class="enhanced-badge" style="font-size:0.65rem">ENHANCED</span>                    │    ║  │
+│     │  ║      │                                                         │    ║  │
+│     │  ║      │  3. LLM Call (adaptive retry):                            │    ║  │
+│     │  ║      │     └─ JSON response with 4 fields:                       │    ║  │
+│     │  ║      │        {thought, action, action_in_natural_language <span class="new-badge" style="font-size:0.65rem">NEW</span>,    │    ║  │
+│     │  ║      │         refined_goal <span class="new-badge" style="font-size:0.65rem">NEW</span>}                                   │    ║  │
+│     │  ║      │                                                         │    ║  │
+│     │  ║      │  4. Parse + Enrich:                                       │    ║  │
+│     │  ║      │     ├─ _extract_full_response(): parse JSON               │    ║  │
+│     │  ║      │     ├─ _extract_element_metadata() <span class="new-badge" style="font-size:0.65rem">NEW</span>                      │    ║  │
+│     │  ║      │     ├─ Update self._refined_goal <span class="new-badge" style="font-size:0.65rem">NEW</span>                         │    ║  │
+│     │  ║      │     └─ Multi-level stuck detection <span class="enhanced-badge" style="font-size:0.65rem">ENHANCED</span>                 │    ║  │
+│     │  ║      │                                                         │    ║  │
+│     │  ║      │  5. Execute action via BrowserGym → get new obs           │    ║  │
+│     │  ║      │                                                         │    ║  │
+│     │  ║      │  6. Record in TrajectoryStep:                             │    ║  │
+│     │  ║      │     ├─ action, thought (existing)                         │    ║  │
+│     │  ║      │     ├─ action_nl <span class="new-badge" style="font-size:0.65rem">NEW</span>                                       │    ║  │
+│     │  ║      │     ├─ refined_goal <span class="new-badge" style="font-size:0.65rem">NEW</span>                                    │    ║  │
+│     │  ║      │     ├─ action_reasoning <span class="new-badge" style="font-size:0.65rem">NEW</span>                                  │    ║  │
+│     │  ║      │     ├─ element_metadata <span class="new-badge" style="font-size:0.65rem">NEW</span> (bid, tag, text)               │    ║  │
+│     │  ║      │     ├─ page_url_before / page_url_after <span class="new-badge" style="font-size:0.65rem">NEW</span>                    │    ║  │
+│     │  ║      │     └─ bounding_box (reserved) <span class="new-badge" style="font-size:0.65rem">NEW</span>                          │    ║  │
+│     │  ║      └─────────────────────────────────────────────────────────┘    ║  │
+│     │  ║                                                                      ║  │
+│     │  ║  EVALUATOR (per trajectory):                                          ║  │
+│     │  ║    ├─ Sends action_nl history + final screenshot + goal to GPT-4V    ║  │
+│     │  ║    └─ Output: {thoughts, task_type, status, failure_reason} <span class="enhanced-badge" style="font-size:0.65rem">ENHANCED</span>  ║  │
+│     │  ╚══════════════════════════════════════════════════════════════════════╝  │
+│     │                                                                            │
+│     │  ╔══════════════════════════════════════════════════════════════════════╗  │
+│     │  ║  PHASE 4: TASK SUMMARIZATION <span class="new-badge" style="font-size:0.7rem">NEW</span>                                    ║  │
+│     │  ║  ┌─────────────────────────────────────────────────────────┐       ║  │
+│     │  ║  │ TaskSummarizationAgent (GPT-4V)                          │       ║  │
+│     │  ║  │                                                         │       ║  │
+│     │  ║  │  Input:                                                  │       ║  │
+│     │  ║  │  • Action history (action_nl based)                      │       ║  │
+│     │  ║  │  • Sampled screenshots (up to 8)                         │       ║  │
+│     │  ║  │  • Original task proposal                                │       ║  │
+│     │  ║  │                                                         │       ║  │
+│     │  ║  │  Output:                                                 │       ║  │
+│     │  ║  │  • Clean task description:                               │       ║  │
+│     │  ║  │    "<action> <details> on <website>"                     │       ║  │
+│     │  ║  │  • Stored in traj.misc["summarized_goal"]                │       ║  │
+│     │  ║  └─────────────────────────────────────────────────────────┘       ║  │
+│     │  ╚══════════════════════════════════════════════════════════════════════╝  │
+│     │                                                                            │
+│     │  ╔══════════════════════════════════════════════════════════════════════╗  │
+│     │  ║  PHASE 5: GRAPH EXPANSION (unchanged, via callbacks)                ║  │
+│     │  ║  process_open_urls_callback → detect new URLs → add child nodes     ║  │
+│     │  ╚══════════════════════════════════════════════════════════════════════╝  │
+│     │                                                                            │
+│     │  graph.add_to_explored(curr_node)                                          │
+│     │  curr_node = graph.get_next_node()                                         │
+│                                                                                  │
+│  OUTPUT: Graph với semantic trajectories → disk (JSON + PNG + SoM metadata)     │
+└──────────────────────────────────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 0: CAPTCHA DETECTION                                            -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="phase0">3. Phase 0: CAPTCHA Detection <span class="new-badge">NEW</span></h2>
+
+<div class="module">
+<h3><span class="tag file">webexp/agents/captcha_detection_agent.py</span> CaptchaDetectionAgent</h3>
+
+<div class="logic"><div class="label">Purpose</div>
+<p>
+Before exploring any node, the framework checks whether the page is a CAPTCHA challenge.
+If detected, the node is skipped entirely — saving LLM calls that would otherwise be wasted
+on unsolvable pages. Uses GPT-4V for visual inspection with a simple yes/no prompt.
+</p>
+</div>
+
+<div class="io-grid">
+<div class="io-box"><div class="label in">Input</div>
+<ul>
+  <li><code>screenshot</code> — PIL Image or numpy array of the page</li>
+</ul></div>
+<div class="io-box"><div class="label out">Output</div>
+<ul>
+  <li><code>bool</code> — True if CAPTCHA detected, False otherwise</li>
+  <li>On error: returns False (fail-open — don't skip valid pages)</li>
+</ul></div>
+</div>
+
+<div class="logic"><div class="label">Integration in web_explore.py (lines 523-530)</div>
+<pre><code># Before exploring each node:
+obs = get_fresh_obs(env)
+if "screenshot" in obs and captcha_detector.is_captcha(obs["screenshot"]):
+    logger.warning(f"CAPTCHA detected at {curr_node.url}, skipping node.")
+    graph.add_to_explored(curr_node)
+    exploration_count += 1
+    curr_node = graph.get_next_node()
+    continue</code></pre>
+</div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 1: ENHANCED TASK PROPOSAL                                       -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="phase1">4. Phase 1: Enhanced Task Proposal <span class="enhanced-badge">ENHANCED</span></h2>
+
+<div class="module">
+<h3>PageExplorerAgent &amp; NavExplorerAgent — Improved Task Quality</h3>
+
+<div class="logic"><div class="label">What Changed</div>
+<p>
+The <code>goal_str</code> for both explorer agents was rewritten to enforce higher-quality task proposals.
+The LLM is now instructed to produce tasks in a standard format with concrete constraints.
+</p>
+
+<h4>Task Format Requirement</h4>
+<pre><code>"&lt;action verb&gt; &lt;specific details with constraints&gt; on &lt;website&gt;"</code></pre>
+
+<h4>Examples Given to LLM</h4>
+<table>
+<tr><th>Good</th><th>Bad</th></tr>
+<tr><td><code>"Find a 4K OLED TV under $1000 with free shipping on BestBuy"</code></td><td><code>"Look at TVs"</code></td></tr>
+<tr><td><code>"Book a hair appointment for Saturday morning on Yelp"</code></td><td><code>"Find a salon"</code></td></tr>
+<tr><td><code>"Add iPhone 15 Pro 256GB to cart on Amazon"</code></td><td><code>"Shop for phones"</code></td></tr>
+</table>
+
+<h4>Task Tags</h4>
+<p>
+Each task is tagged: <code>[INFO]</code> information seeking, <code>[NAV]</code> navigation,
+<code>[MOD]</code> content modification. Multiple tags supported (e.g. <code>[INFO][MOD]</code>).
+</p>
+
+<h4>SoM Integration</h4>
+<p>When <code>use_som=True</code> is configured, the prompt builder includes Set-of-Mark instructions
+in the system message so explorer agents understand numbered element tags.</p>
+</div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 2: FEASIBILITY CHECK                                            -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="phase2">5. Phase 2: Feasibility Check</h2>
+
+<div class="note">
+<strong>Structurally unchanged.</strong> Each proposed task is attempted by a SolverAgent.
+If the evaluator marks it as success, the task is deemed "feasible." The enriched evaluation
+(see <a href="#phase4">Phase 4</a>) applies during this step, providing task type classification
+and failure reasons for infeasible tasks.
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 3: SEMANTIC TRAJECTORY GENERATION                                -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="phase3">6. Phase 3: Semantic Trajectory Generation <span class="new-badge">CORE NEW</span></h2>
+
+<p>This is the heart of the upgrade. Every solver trajectory step now carries rich semantic metadata.
+Below is a breakdown of each new capability.</p>
+
+<!-- ── SoM ──────────────────────────────────────────────────────────────── -->
+<h3 id="som">6.1 Set-of-Mark Visual Grounding <span class="new-badge">NEW</span></h3>
+
+<div class="module">
+<h3>
+  <span class="tag file">webexp/explore/grounding/set_of_mark.py</span>
+  <span class="tag file">webexp/explore/grounding/som_processor.py</span>
+  Set-of-Mark Grounding
+</h3>
+
+<div class="logic"><div class="label">How It Works</div>
+<ol>
+  <li><strong>som_processor.py</strong> walks BrowserGym's accessibility tree, extracts bounding boxes from <code>extra_element_properties</code>, and builds a Region-of-Interest dict mapping <code>bid</code> → <code>{rects, tag, text}</code>.</li>
+  <li><strong>set_of_mark.py</strong> draws semi-transparent colored rectangles with numbered labels over each interactive element on the screenshot. Color is deterministic per element ID.</li>
+  <li>The annotated screenshot <strong>replaces</strong> the original in the observation, while the original is preserved at <code>obs["som_screenshot_original"]</code>.</li>
+  <li>A <code>som_id_info</code> dict maps SoM tag IDs (which are BrowserGym bids) → <code>{bbox, tag, text}</code> for downstream action grounding.</li>
+</ol>
+</div>
+
+<div class="io-grid">
+<div class="io-box"><div class="label in">Input</div>
+<ul>
+  <li>BrowserGym observation: screenshot + axtree_object + extra_element_properties</li>
+</ul></div>
+<div class="io-box"><div class="label out">Output</div>
+<ul>
+  <li><code>obs["screenshot"]</code> → SoM-annotated image</li>
+  <li><code>obs["som_screenshot_original"]</code> → original screenshot</li>
+  <li><code>obs["som_id_info"]</code> → bid-to-bbox mapping</li>
+  <li><code>obs["som_visible_ids"]</code> → elements visible on screen</li>
+  <li><code>obs["som_above_ids"]</code> → elements above viewport</li>
+  <li><code>obs["som_below_ids"]</code> → elements below viewport</li>
+</ul></div>
+</div>
+
+<div class="logic"><div class="label">Integration in SolverAgent.obs_preprocessor() (lines 298-305)</div>
+<pre><code>if self.use_som:
+    try:
+        processed = process_observation(processed)
+        # Screenshot is now the SoM-annotated version
+    except Exception as e:
+        logger.warning(f"SoM processing failed: {e}")</code></pre>
+<p>
+When <code>use_som=True</code>, the prompt builder includes SoM instructions explaining that
+numbered tags correspond to interactive elements and can be referenced in actions.
+</p>
+</div>
+</div>
+
+<!-- ── Evolving Goal ────────────────────────────────────────────────────── -->
+<h3 id="evolving-goal">6.2 Evolving Task Refinement <span class="new-badge">NEW</span></h3>
+
+<div class="module">
+<h3>refined_goal — Task Description Evolves Each Step</h3>
+
+<div class="logic"><div class="label">How It Works</div>
+<ol>
+  <li><strong>LLM is prompted</strong> to output a <code>refined_goal</code> field in its JSON response — the agent's updated understanding of what it's trying to accomplish.</li>
+  <li><strong>SolverAgent</strong> parses <code>refined_goal</code> from the LLM response and stores it in <code>self._refined_goal</code> (line 386).</li>
+  <li><strong>Episode runner</strong> injects <code>refined_goal</code> into <code>callback_context_seed</code> (episode.py line 242), making it available to subsequent steps.</li>
+  <li><strong>Prompt builder</strong> renders the current refined goal as a <code># Current Task Understanding (evolving)</code> section in the prompt — the LLM sees its own evolving understanding.</li>
+</ol>
+
+<h4>Example Evolution</h4>
+<table>
+<tr><th>Step</th><th>refined_goal</th></tr>
+<tr><td>0 (initial)</td><td><code>"Find a product on Amazon"</code></td></tr>
+<tr><td>3</td><td><code>"Find a coffee maker under $100 with 4+ stars and free shipping on Amazon"</code></td></tr>
+<tr><td>6</td><td><code>"Purchase the Keurig K-Mini coffee maker ($79.99, 4.5 stars) on Amazon"</code></td></tr>
+</table>
+</div>
+
+<div class="logic"><div class="label">Prompt Builder — refined_goal_message() (lines 392-401)</div>
+<pre><code>def refined_goal_message(self, refined_goal: str | None) -> str:
+    if not refined_goal:
+        return ""
+    return (
+        "# Current Task Understanding (evolving)\n"
+        "The task you are trying to accomplish has been refined based on "
+        "what you've learned so far. Your current understanding is:\n\n"
+        f"{refined_goal}\n\n"
+        "Update this description as you learn more specific details "
+        "(e.g., exact product names, prices, constraints)."
+    )</code></pre>
+</div>
+</div>
+
+<!-- ── Action NL ────────────────────────────────────────────────────────── -->
+<h3 id="action-nl">6.3 Natural Language Action Descriptions <span class="new-badge">NEW</span></h3>
+
+<div class="module">
+<h3>action_in_natural_language — Dual Action Representation</h3>
+
+<div class="logic"><div class="label">How It Works</div>
+<p>
+The LLM is now required to output <code>action_in_natural_language</code> alongside the raw action.
+This gives every step <strong>two representations</strong> of the same action:
+</p>
+<ul>
+  <li><strong>Grounded form:</strong> <code>click('bid_42')</code> — executable by BrowserGym</li>
+  <li><strong>Natural language:</strong> <code>"Click on the 'Sony WH-1000XM5 Wireless Headphones' link in the search results"</code> — human-readable, used by downstream agents</li>
+</ul>
+</div>
+
+<div class="logic"><div class="label">LLM Output Format (from solver_prompt_builder.py)</div>
+<pre><code>{
+  "thought": "I need to click on the first search result...",
+  "action": "click('bid_42')",
+  "action_in_natural_language": "Click on the 'Sony WH-1000XM5' product link",
+  "refined_goal": "Find Sony WH-1000XM5 headphones under $350 on Amazon"
+}</code></pre>
+</div>
+
+<div class="logic"><div class="label">Consumers of action_nl</div>
+<ul>
+  <li><strong>Evaluator:</strong> Uses <code>action_nl</code> as the primary action description (falls back to raw action)</li>
+  <li><strong>TaskSummarizationAgent:</strong> Builds action list from <code>action_nl</code> preferentially</li>
+  <li><strong>Logging:</strong> Both raw action and NL description are logged for debugging</li>
+</ul>
+</div>
+</div>
+
+<!-- ── Element Metadata ─────────────────────────────────────────────────── -->
+<h3 id="element-metadata">6.4 Element Metadata Extraction <span class="new-badge">NEW</span></h3>
+
+<div class="module">
+<h3>_extract_element_metadata() — Parse Element Info from Axtree</h3>
+
+<div class="logic"><div class="label">How It Works (solver_agent.py lines 154-185)</div>
+<p>
+After the LLM selects an action targeting <code>bid_XX</code>, the agent parses the accessibility tree
+to find the element and extract its properties:
+</p>
+<pre><code>{
+  "bid": "42",
+  "tag": "link",
+  "text": "Sony WH-1000XM5 Wireless Noise Canceling Headphones - $348.00"
+}</code></pre>
+<p>
+This bridges the gap between the abstract bid reference and the actual page element,
+providing rich context for training and analysis.
+</p>
+</div>
+</div>
+
+<!-- ── URL Tracking ─────────────────────────────────────────────────────── -->
+<h3 id="url-tracking">6.5 Per-Step URL Tracking <span class="new-badge">NEW</span></h3>
+
+<div class="module">
+<h3>page_url_before &amp; page_url_after</h3>
+
+<div class="logic"><div class="label">How It Works</div>
+<ul>
+  <li><strong>page_url_before:</strong> Captured from <code>obs["open_pages_urls"][0]</code> before the action is executed (solver_agent.py line 345).</li>
+  <li><strong>page_url_after:</strong> Written to the last trajectory step after <code>env.step()</code> completes (episode.py lines 233-237).</li>
+</ul>
+<p>
+This enables precise tracking of navigation effects — did the action cause a page change?
+Useful for filtering navigation vs. in-page actions during training data preparation.
+</p>
+</div>
+</div>
+
+<!-- ── Stuck Detection ──────────────────────────────────────────────────── -->
+<h3 id="stuck-detection">6.6 Enhanced Stuck Detection <span class="enhanced-badge">ENHANCED</span></h3>
+
+<div class="module">
+<h3>Multi-Level Stuck &amp; Retry-Loop Detection</h3>
+
+<div class="logic"><div class="label">Three Levels of Detection (solver_agent.py lines 391-429)</div>
+
+<table>
+<tr><th>Level</th><th>Condition</th><th>Action</th></tr>
+<tr>
+  <td><strong>1. Retry-loop</strong></td>
+  <td>Same (action, error) pair ≥3 consecutive times</td>
+  <td>Raises <code>ValueError</code> → episode ends, forces replan</td>
+</tr>
+<tr>
+  <td><strong>2. Soft stuck</strong></td>
+  <td>≤2 unique actions in last 5 steps (≥4 steps history)</td>
+  <td>Logs warning, continues (prompt builder may inject recovery advice)</td>
+</tr>
+<tr>
+  <td><strong>3. Hard stuck</strong></td>
+  <td>Same action executed ≥6 consecutive times (with or without errors)</td>
+  <td>Raises <code>ValueError</code> → episode ends, prevents infinite loop</td>
+</tr>
+</table>
+</div>
+
+<div class="logic"><div class="label">Error Recovery in Prompt Builder (solver_prompt_builder.py lines 204-338)</div>
+<p>
+New methods classify errors and inject targeted recovery advice into the prompt:
+</p>
+<ul>
+  <li><code>_classify_error()</code> — categorizes: multi_action, timeout, element_not_found, navigation_error, etc.</li>
+  <li><code>_error_recovery_advice()</code> — returns specific guidance per error category</li>
+  <li><code>strategy_change_message()</code> — escalated warning when same action+error repeats</li>
+  <li><code>silent_stuck_message()</code> — warns when same action repeats without errors</li>
+</ul>
+</div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 4: ENHANCED EVALUATION                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="phase4">7. Phase 4: Enhanced Evaluation <span class="enhanced-badge">ENHANCED</span></h2>
+
+<div class="module">
+<h3><span class="tag file">webexp/explore/core/evaluator.py</span> Evaluator — Task Type Classification</h3>
+
+<div class="logic"><div class="label">What Changed</div>
+<p>
+The evaluator now classifies trajectories into <strong>four task types</strong> with detailed reasoning,
+instead of just returning binary success/failure.
+</p>
+
+<h4>Task Types</h4>
+<table>
+<tr><th>Type</th><th>Definition</th><th>Success Criteria</th></tr>
+<tr>
+  <td><strong>transaction</strong></td>
+  <td>Booking, ordering, add-to-cart, checkout</td>
+  <td>Agent reaches checkout/login page or initiates transaction</td>
+</tr>
+<tr>
+  <td><strong>information_seeking</strong></td>
+  <td>Finding product info, reviews, comparisons, maps</td>
+  <td>Agent's response contains the requested info or states unavailability</td>
+</tr>
+<tr>
+  <td><strong>site_navigation</strong></td>
+  <td>Navigating to a specific page</td>
+  <td>Final page matches the navigation target (ignores agent's text response)</td>
+</tr>
+<tr>
+  <td><strong>content_modification</strong></td>
+  <td>Modifying page content or configuration</td>
+  <td>Final page state shows the modification was applied (ignores agent's text response)</td>
+</tr>
+</table>
+
+<h4>Output Format</h4>
+<pre><code>Thoughts: &lt;your thoughts and reasoning process&gt;
+Task Type: &lt;transaction|information_seeking|site_navigation|content_modification&gt;
+Status: &lt;"success" or "failure"&gt;
+Failure Reason: &lt;if status is failure, briefly explain why. If success, write "N/A"&gt;</code></pre>
+
+<h4>Stored in Trajectory</h4>
+<pre><code>trajectory.misc["evaluation_info"] = {
+    "output": {"thoughts": ..., "task_type": ..., "status": ..., "failure_reason": ...},
+    "task_type": "information_seeking",
+    "failure_reason": "Agent could not find the requested product",
+    "reward": 0.0,
+    "model_usage": {"prompt_tokens": 1500, "completion_tokens": 100, "total_tokens": 1600}
+}</code></pre>
+</div>
+
+<div class="logic"><div class="label">Uses action_nl for Evaluation (evaluator.py line 137)</div>
+<pre><code># Prefer natural language description if available
+action_desc = step.action_nl or step.action
+action_history += f"{idx+1}: {action_desc}\n"</code></pre>
+</div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 5: TASK SUMMARIZATION                                           -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="phase5">8. Phase 5: Task Summarization <span class="new-badge">NEW</span></h2>
+
+<div class="module">
+<h3><span class="tag file">webexp/agents/task_summarization_agent.py</span> TaskSummarizationAgent</h3>
+
+<div class="logic"><div class="label">Purpose</div>
+<p>
+After all trajectories for a node are collected, <code>_summarize_node_trajectories()</code>
+iterates over every feasible task's positive and negative trajectories and calls
+<strong>TaskSummarizationAgent</strong> to produce a clean, coherent task description from
+the full action history and screenshots.
+</p>
+<p>
+This is a critical addition because the original task proposal may be vague or inaccurate.
+The summarized goal captures <strong>what was actually accomplished</strong>, not what was initially proposed.
+</p>
+</div>
+
+<div class="io-grid">
+<div class="io-box"><div class="label in">Input</div>
+<ul>
+  <li>Action history (preferring <code>action_nl</code>, falling back to raw <code>action</code>)</li>
+  <li>Up to 8 evenly-sampled screenshots from the trajectory</li>
+  <li>Original task proposal for context</li>
+</ul></div>
+<div class="io-box"><div class="label out">Output</div>
+<ul>
+  <li>Clean task description: <code>"&lt;action verb&gt; &lt;details&gt; on &lt;website&gt;"</code></li>
+  <li>Stored in <code>trajectory.misc["summarized_goal"]</code></li>
+  <li>Persisted via <code>trajectory.save_info()</code> (no re-saving screenshots)</li>
+  <li>Skips if already summarized (idempotent)</li>
+</ul></div>
+</div>
+
+<div class="logic"><div class="label">Integration in web_explore.py (line 600)</div>
+<pre><code># After all solvers complete for the node:
+_summarize_node_trajectories(curr_node, evaluator.model_name)</code></pre>
+</div>
+
+<div class="logic"><div class="label">Summarization Prompt Requirements</div>
+<ol>
+  <li>Task must contain an action verb (Buy, Book, Find, Check, Search, etc.)</li>
+  <li>Task must be clear, specific, and provide all necessary info</li>
+  <li>Task must end with "... on &lt;website_name&gt;"</li>
+  <li>Task must include constraints (budget, features, specs)</li>
+  <li>No quotation marks in the task description</li>
+</ol>
+</div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- DATA MODEL                                                            -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="data-model">9. Data Model: Before vs After</h2>
+
+<h3>9.1 TrajectoryStep — Side by Side</h3>
+
+<table>
+<tr><th>Field</th><th>Before</th><th>After</th><th>Source</th></tr>
+<tr>
+  <td><code>action</code></td>
+  <td><code>"click('bid_42')"</code></td>
+  <td><code>"click('bid_42')"</code></td>
+  <td>LLM → parsed</td>
+</tr>
+<tr>
+  <td><code>parsed_action</code></td>
+  <td><code>"click('bid_42')"</code></td>
+  <td><code>"click('bid_42')"</code></td>
+  <td>Action parser</td>
+</tr>
+<tr>
+  <td><code>thought</code></td>
+  <td><code>"I need to click..."</code></td>
+  <td><code>"I need to click..."</code></td>
+  <td>LLM JSON</td>
+</tr>
+<tr>
+  <td><code>observation</code></td>
+  <td>screenshot + axtree + urls</td>
+  <td>screenshot (SoM) + axtree + urls + SoM metadata</td>
+  <td>BrowserGym + SoM processor</td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>action_nl</code> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td><code>"Click on the 'Sony WH-1000XM5' link"</code></td>
+  <td>LLM JSON <code>action_in_natural_language</code></td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>refined_goal</code> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td><code>"Find Sony WH-1000XM5 under $350 on Amazon"</code></td>
+  <td>LLM JSON <code>refined_goal</code></td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>action_reasoning</code> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td>Same as <code>thought</code></td>
+  <td>episode.py (set from thought)</td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>bounding_box</code> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td><code>{"x": 245, "y": 380, "width": 600, "height": 24}</code></td>
+  <td>Reserved for future SoM integration</td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>element_metadata</code> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td><code>{"bid": "42", "tag": "link", "text": "Sony WH-..."}</code></td>
+  <td>_extract_element_metadata() from axtree</td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>page_url_before</code> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td><code>"https://www.amazon.com/s?k=sony"</code></td>
+  <td>obs["open_pages_urls"][0] before action</td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>page_url_after</code> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td><code>"https://www.amazon.com/s?k=sony"</code></td>
+  <td>obs["open_pages_urls"][0] after env.step()</td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>misc</code> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td><code>{"model_usage": ..., "agent_config": ...}</code></td>
+  <td>Episode runner</td>
+</tr>
+</table>
+
+<h3>9.2 Trajectory.misc — New Top-Level Metadata</h3>
+
+<table>
+<tr><th>Key</th><th>Type</th><th>Set By</th><th>Purpose</th></tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><code>summarized_goal</code> <span class="new-badge">NEW</span></td>
+  <td><code>str</code></td>
+  <td>TaskSummarizationAgent</td>
+  <td>Clean task description from full action history + screenshots</td>
+</tr>
+<tr style="background: rgba(210,153,29,0.08);">
+  <td><code>evaluation_info</code> <span class="enhanced-badge">ENHANCED</span></td>
+  <td><code>dict</code></td>
+  <td>Evaluator</td>
+  <td>Now includes: task_type, failure_reason, output, reward, model_usage</td>
+</tr>
+<tr>
+  <td><code>needs_prefix</code></td>
+  <td><code>bool</code></td>
+  <td>web_explore.py</td>
+  <td>Whether trajectory needs a navigation prefix (unchanged)</td>
+</tr>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- AGENT PIPELINE COMPARISON                                             -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="agent-pipeline">10. Agent Pipeline Comparison</h2>
+
+<table>
+<tr><th>Agent</th><th>Before</th><th>After</th></tr>
+<tr>
+  <td><strong>Task Proposal</strong></td>
+  <td>PageExplorerAgent + NavExplorerAgent with basic goal_str</td>
+  <td>
+    <strong>Enhanced</strong> goal_str with standard format, concrete examples,
+    SoM support. Output: <code>"&lt;verb&gt; &lt;details&gt; on &lt;website&gt;"</code>
+  </td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><strong>Task Refinement</strong> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td>
+    <strong>Integrated into SolverAgent.</strong> LLM outputs <code>refined_goal</code>
+    each step. Propagated via callback_context. Rendered in prompt as evolving task understanding.
+  </td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><strong>Task Summarization</strong> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td>
+    <strong>TaskSummarizationAgent</strong> (GPT-4V). Runs post-trajectory.
+    Produces clean task description from action history + screenshots.
+  </td>
+</tr>
+<tr style="background: rgba(210,153,29,0.08);">
+  <td><strong>Evaluation</strong> <span class="enhanced-badge">ENHANCED</span></td>
+  <td>Binary success/failure via GPT-4V</td>
+  <td>
+    <strong>4-type classification:</strong> transaction, information_seeking,
+    site_navigation, content_modification. + failure_reason.
+    Uses action_nl for richer context.
+  </td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><strong>CAPTCHA Detection</strong> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td>
+    <strong>CaptchaDetectionAgent</strong> (GPT-4V). Checks screenshot before
+    node exploration. Skips node if CAPTCHA detected.
+  </td>
+</tr>
+<tr style="background: rgba(247,119,186,0.08);">
+  <td><strong>Visual Grounding</strong> <span class="new-badge">NEW</span></td>
+  <td>—</td>
+  <td>
+    <strong>Set-of-Mark</strong> via SoM processor + set_of_mark.py.
+    Numbered tags overlay on screenshots. Enabled via <code>use_som=True</code> config.
+  </td>
+</tr>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- FILE MAP                                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="files">11. File Map — What Was Created &amp; Modified</h2>
+
+<h3>11.1 New Files Created</h3>
+
+<table>
+<tr><th>File</th><th>Lines</th><th>Purpose</th></tr>
+<tr>
+  <td><code>webexp/agents/task_summarization_agent.py</code></td>
+  <td>181</td>
+  <td>Post-hoc task summarization from action history + screenshots via GPT-4V</td>
+</tr>
+<tr>
+  <td><code>webexp/agents/captcha_detection_agent.py</code></td>
+  <td>96</td>
+  <td>CAPTCHA detection via GPT-4V visual inspection</td>
+</tr>
+<tr>
+  <td><code>webexp/explore/grounding/__init__.py</code></td>
+  <td>—</td>
+  <td>Package init for grounding module</td>
+</tr>
+<tr>
+  <td><code>webexp/explore/grounding/set_of_mark.py</code></td>
+  <td>109</td>
+  <td>SoM overlay drawing — colored numbered tags on screenshots</td>
+</tr>
+<tr>
+  <td><code>webexp/explore/grounding/som_processor.py</code></td>
+  <td>153</td>
+  <td>Bridge: BrowserGym axtree → SoM ROIs → annotated observation</td>
+</tr>
+</table>
+
+<h3>11.2 Existing Files Modified</h3>
+
+<table>
+<tr><th>File</th><th>Changes</th></tr>
+<tr>
+  <td><code>webexp/explore/core/trajectory.py</code></td>
+  <td>
+    8 new fields on TrajectoryStep (<code>action_nl</code>, <code>refined_goal</code>,
+    <code>action_reasoning</code>, <code>bounding_box</code>, <code>element_metadata</code>,
+    <code>page_url_before</code>, <code>page_url_after</code>, <code>misc</code>).
+    Updated <code>add_step()</code>, <code>save()</code>, <code>load()</code>.
+    New <code>save_info()</code> for metadata-only updates.
+  </td>
+</tr>
+<tr>
+  <td><code>webexp/explore/core/episode.py</code></td>
+  <td>
+    <code>get_action()</code> extracts 4 new fields from agent response.
+    <code>page_url_after</code> recorded after env.step().
+    <code>refined_goal</code> propagated via callback_context_seed.
+  </td>
+</tr>
+<tr>
+  <td><code>webexp/explore/core/evaluator.py</code></td>
+  <td>
+    New 4-type classification prompt. Extracts task_type and failure_reason.
+    Stores full evaluation_info in trajectory.misc. Uses action_nl preferentially.
+  </td>
+</tr>
+<tr>
+  <td><code>webexp/explore/algorithms/web_explore.py</code></td>
+  <td>
+    CAPTCHA detection before node exploration. Task summarization after solvers complete.
+    Imports TaskSummarizationAgent and CaptchaDetectionAgent.
+  </td>
+</tr>
+<tr>
+  <td><code>webexp/agents/solver_agent.py</code></td>
+  <td>
+    New <code>_extract_full_response()</code> for 4-field JSON parsing.
+    New <code>_extract_element_metadata()</code> for axtree parsing.
+    <code>_refined_goal</code> instance variable with update tracking.
+    SoM integration in <code>obs_preprocessor()</code>.
+    <code>use_som</code> constructor parameter.
+    Multi-level stuck detection.
+    Enhanced step metadata recording.
+  </td>
+</tr>
+<tr>
+  <td><code>webexp/agents/prompt_builders/solver_prompt_builder.py</code></td>
+  <td>
+    New output format with <code>action_in_natural_language</code> + <code>refined_goal</code>.
+    <code>refined_goal_message()</code> for evolving task context.
+    Error classification + recovery advice methods.
+    SoM instructions in system message when <code>use_som=True</code>.
+    Updated CoT examples with new fields.
+  </td>
+</tr>
+<tr>
+  <td><code>webexp/agents/page_explorer_agent.py</code></td>
+  <td>
+    Enhanced goal_str with standard format, concrete examples, SoM support.
+  </td>
+</tr>
+<tr>
+  <td><code>webexp/agents/nav_explorer_agent.py</code></td>
+  <td>
+    Enhanced goal_str with navigation-specific format, SoM support.
+  </td>
+</tr>
+<tr>
+  <td><code>webexp/agents/prompt_builders/page_explorer_prompt_builder.py</code></td>
+  <td>SoM support in system message.</td>
+</tr>
+<tr>
+  <td><code>webexp/agents/prompt_builders/nav_explorer_prompt_builder.py</code></td>
+  <td>SoM support in system message.</td>
+</tr>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- DATA FLOW SUMMARY                                                     -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="data-flow">12. End-to-End Data Flow: One Trajectory Step</h2>
+
+<div style="background:#0d1117; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto;">
+<pre style="background:none; border:none; color:#c9d1d9; text-align:left; font-size:0.82rem; line-height:1.9;">
+
+  BROWSER GYM                              SOLVER AGENT
+  ───────────                              ────────────
+  env._get_obs()
+    │                                       obs_preprocessor(obs)
+    │                                         ├─ flatten axtree, prune HTML
+    │                                         ├─ extract URLs
+    │                                         └─ <strong>process_observation()</strong> ← SoM overlay <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                              ├─ extract_rois_from_axtree()
+    │                                              └─ add_set_of_mark(screenshot, rois)
+    ▼                                              │
+  obs {screenshot (SoM),                      get_action(obs)
+       axtree_txt,                              │
+       open_pages_urls,                         ├─ make_llm_call_with_adaptive_retry()
+       ...}                                     │    └─ prompt_builder.build_messages(
+    │                                           │         refined_goal=<strong>self._refined_goal</strong>,  ← evolving <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                           │         use_som=<strong>self.use_som</strong>)            ← SoM <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                           │
+    │                                           ├─ _extract_full_response(raw)
+    │                                           │    → {action, thought,
+    │                                           │       <strong>action_nl</strong>,          ← NL desc <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                           │       <strong>refined_goal</strong>}        ← evolving <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                           │
+    │                                           ├─ _extract_element_metadata(axtree, action)
+    │                                           │    → {bid, tag, text}               ← element info <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                           │
+    │                                           ├─ Update self._refined_goal          ← track evolution <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                           │
+    │                                           ├─ Multi-level stuck detection        ← enhanced <span class="enhanced-badge" style="font-size:0.65rem">ENHANCED</span>
+    │                                           │
+    │                                           └─ Return (action, extras)
+    │                                                extras = {thought, parsed_action,
+    │                                                          <strong>action_nl</strong>,          <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                                          <strong>refined_goal</strong>,       <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                                          <strong>element_metadata</strong>,   <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                                          <strong>page_url_before</strong>,     <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                                          model_usage}
+    ▼                                                      │
+  env.step(action)                                        │
+    │                                                     │
+    ▼                                                     ▼
+  new obs                                           get_action() in episode.py
+    │                                                 ├─ traj.add_step(
+    │                                                 │     action, thought, obs,
+    │                                                 │     <strong>action_nl</strong>=...,        <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                                 │     <strong>refined_goal</strong>=...,     <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                                 │     <strong>element_metadata</strong>=..., <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                                 │     <strong>page_url_before</strong>=...,   <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │                                                 │   )
+    │                                                 │
+    │  ┌──────────────────────────────────────────────┘
+    │  │
+    │  ├─ Record <strong>page_url_after</strong>              ← URL tracking <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │  │    traj.steps[-1].page_url_after = obs["open_pages_urls"][0]
+    │  │
+    │  └─ Propagate <strong>refined_goal</strong>              ← next step context <span class="new-badge" style="font-size:0.65rem">NEW</span>
+    │       callback_context_seed["refined_goal"] = refined_goal
+    │
+    ▼
+  (next step uses updated refined_goal)
+
+</pre>
+</div>
+
+<div class="callout">
+<strong>Key Architectural Decision:</strong> The semantic fields flow through three layers:
+(1) <strong>LLM</strong> outputs them in JSON → (2) <strong>SolverAgent</strong> parses and enriches them →
+(3) <strong>Episode runner</strong> records them in TrajectoryStep and propagates refined_goal forward.
+This separation keeps the agent stateless per-step while the episode runner manages cross-step state.
+</div>
+
+<hr>
+
+<h2 id="config">13. Configuration — Enabling Semantic Features</h2>
+
+<p>All new features are opt-in via the YAML config. Example:</p>
+
+<pre><code># In configs/go_browse_config.yaml
+
+solvers:
+  - agent_factory_args:
+      name: SolverAgent
+      model_id: gpt-4o
+      use_som: true          # ← Enable Set-of-Mark visual grounding
+
+evaluator:
+  model_name: gpt-4o         # Used by Evaluator, TaskSummarizationAgent, CaptchaDetectionAgent</code></pre>
+
+<div class="note">
+<strong>Token cost impact:</strong> The additional JSON fields (<code>action_in_natural_language</code>,
+<code>refined_goal</code>) increase completion tokens by ~2-3x. Task summarization adds 1 extra
+GPT-4V call per trajectory. CAPTCHA detection adds 1 cheap call per node (10 token max).
+SoM processing is CPU-only (no API cost) but adds ~100-200ms per step for image overlay.
+</div>
+
+<hr>
+<p style="text-align:center; color: var(--text-muted); font-size:0.88rem; margin-top:40px;">
+  Go-Browse Semantic Trajectory — Updated Explore Flow — 2026-05-19<br>
+  Based on commits <code>7f776c5</code> and <code>d23843f</code> ("SEMANTIC TRAJECTORY")
+</p>
+
+</body>
+</html>
