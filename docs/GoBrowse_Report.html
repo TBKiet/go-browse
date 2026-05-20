@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Go-Browse Framework — Báo Cáo Tổng Quan &amp; Cải Tiến Semantic Trajectory</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #79c0ff;
+    --green: #3fb950;
+    --orange: #d2991d;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --pink: #f778ba;
+    --code-bg: #1c2128;
+    --radius: 8px;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.7;
+    max-width: 1000px; margin: 0 auto; padding: 40px 24px 120px;
+  }
+  h1 { font-size: 2rem; color: #f0f6fc; border-bottom: 2px solid var(--border); padding-bottom: 14px; margin-bottom: 6px; }
+  h1 .sub { display: block; font-size: 0.92rem; color: var(--text-muted); font-weight: 400; margin-top: 4px; }
+  h2 { font-size: 1.4rem; margin-top: 44px; margin-bottom: 14px; color: var(--accent2); border-left: 4px solid var(--accent); padding-left: 14px; }
+  h3 { font-size: 1.1rem; margin-top: 28px; margin-bottom: 10px; color: #e6edf3; }
+  p { margin-bottom: 12px; }
+  strong { color: #f0f6fc; }
+  code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--code-bg); padding: 2px 6px; border-radius: 4px; color: var(--pink);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 18px; overflow-x: auto; margin: 12px 0; font-size: 0.83rem; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .hero {
+    background: linear-gradient(135deg, rgba(88,166,255,0.08) 0%, rgba(188,140,255,0.06) 100%);
+    border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 32px; margin: 24px 0;
+  }
+  .hero p { font-size: 1.05rem; margin-bottom: 8px; }
+
+  .info-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0;
+  }
+  .info-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px 22px;
+  }
+  .info-card h4 { font-size: 0.85rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px; }
+  .info-card ul { padding-left: 18px; font-size: 0.9rem; }
+  .info-card li { margin-bottom: 4px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--accent2); font-weight: 600; background: var(--surface); }
+  tr:hover { background: rgba(88,166,255,0.03); }
+
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 12px;
+    font-size: 0.75rem; font-weight: 600; margin-right: 4px;
+  }
+  .badge-done { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-new  { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .badge-fix  { background: rgba(210,153,29,0.15); color: var(--orange); }
+
+  .flow-box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 22px; margin: 14px 0; font-family: var(--mono); font-size: 0.82rem;
+    line-height: 1.9; white-space: pre; overflow-x: auto;
+  }
+
+  .compare-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0;
+  }
+  .compare-box {
+    border-radius: var(--radius); padding: 16px 20px;
+  }
+  .compare-box.before { background: rgba(248,81,73,0.06); border: 1px solid rgba(248,81,73,0.2); }
+  .compare-box.after  { background: rgba(63,185,80,0.06);  border: 1px solid rgba(63,185,80,0.2); }
+  .compare-box h4 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .compare-box.before h4 { color: var(--red); }
+  .compare-box.after  h4 { color: var(--green); }
+
+  .highlight {
+    background: rgba(210,153,29,0.08); border: 1px solid rgba(210,153,29,0.25);
+    border-radius: var(--radius); padding: 14px 18px; margin: 14px 0; font-size: 0.9rem;
+  }
+  .highlight strong { color: var(--orange); }
+
+  .success-metric {
+    display: flex; align-items: center; gap: 12px;
+    background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.25);
+    border-radius: var(--radius); padding: 18px 22px; margin: 16px 0;
+  }
+  .success-metric .num { font-size: 2.5rem; font-weight: 700; color: var(--green); }
+  .success-metric .desc { font-size: 0.92rem; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 26px; margin: 20px 0; }
+  .toc h3 { margin-top: 0; font-size: 1rem; }
+  .toc ol { padding-left: 20px; font-size: 0.9rem; }
+  .toc li { margin-bottom: 5px; }
+  .toc a { color: var(--accent2); }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  footer { text-align: center; color: var(--text-muted); font-size: 0.82rem; margin-top: 40px; }
+</style>
+</head>
+<body>
+
+<h1>
+  Go-Browse Framework
+  <span class="sub">Tổng Quan Kiến Trúc &amp; Cải Tiến Semantic Trajectory — 05/2026</span>
+</h1>
+
+<div class="toc">
+<h3>Mục Lục</h3>
+<ol>
+  <li><a href="#what">Go-Browse là gì?</a></li>
+  <li><a href="#how">Cách hoạt động (trước cải tiến)</a></li>
+  <li><a href="#problem">Vấn đề: trajectory thiếu ngữ nghĩa</a></li>
+  <li><a href="#improvement">7 Phase cải tiến — Semantic Trajectory</a></li>
+  <li><a href="#result">Kết quả: 66/66 tests pass, 5 bugs fixed</a></li>
+  <li><a href="#compare">So sánh trước vs sau</a></li>
+</ol>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- WHAT IS GO-BROWSE                                                      -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="what">1. Go-Browse là gì?</h2>
+
+<div class="hero">
+<p>
+<strong>Go-Browse</strong> là một framework Python giúp <strong>thu thập dữ liệu huấn luyện cho web agent một cách tự động</strong> — không cần con người gán nhãn.
+</p>
+<p>
+Ý tưởng cốt lõi: cho một AI (LLM) tự động duyệt website → tự nghĩ ra nhiệm vụ → tự thực hiện → tự đánh giá thành công hay thất bại.
+Kết quả là tập dữ liệu gồm hàng ngàn "trajectory" (chuỗi hành động trên web) dùng để huấn luyện model nhỏ hơn, nhanh hơn.
+</p>
+</div>
+
+<div class="info-grid">
+<div class="info-card">
+<h4>Input</h4>
+<ul>
+  <li>1 URL gốc (vd: amazon.com)</li>
+  <li>Danh sách URL được phép / bị chặn (regex)</li>
+  <li>Config số lượng agent, model, max steps</li>
+</ul>
+</div>
+<div class="info-card">
+<h4>Output</h4>
+<ul>
+  <li>Đồ thị website (Graph) — các trang + đường đi</li>
+  <li>Hàng trăm Task (nhiệm vụ) đã được kiểm tra khả thi</li>
+  <li>Hàng nghìn Trajectory (chuỗi hành động) dùng để train</li>
+</ul>
+</div>
+</div>
+
+<p><strong>3 luồng chính:</strong></p>
+<table>
+<tr><th>Luồng</th><th>Mô tả</th><th>File chính</th></tr>
+<tr><td><strong>1. Khám phá</strong></td><td>AI duyệt website, đề xuất task, giải task, mở rộng đồ thị</td><td><code>webexp/explore/algorithms/web_explore.py</code></td></tr>
+<tr><td><strong>2. Tiền xử lý</strong></td><td>Lọc trajectory thành công, trích xuất prompt+completion, split train/val</td><td><code>preprocess.py</code></td></tr>
+<tr><td><strong>3. Huấn luyện</strong></td><td>SFT/LoRA fine-tune model nhỏ hơn (Qwen) từ dữ liệu đã xử lý</td><td><code>train_lora.py</code>, <code>webexp/train/</code></td></tr>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- HOW IT WORKS                                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="how">2. Cách hoạt động (trước cải tiến)</h2>
+
+<h3>2.1 Cấu trúc dữ liệu lõi</h3>
+
+<p>Framework xoay quanh một <strong>đồ thị có hướng</strong> biểu diễn website:</p>
+
+<table>
+<tr><th>Data Model</th><th>Ý nghĩa</th><th>Ví dụ</th></tr>
+<tr><td><code>Graph</code></td><td>Toàn bộ website đã khám phá (danh sách kề)</td><td>Đồ thị với 50 node, 200 cạnh</td></tr>
+<tr><td><code>Node</code></td><td>Một trang web cụ thể</td><td><code>amazon.com/s?k=laptop</code></td></tr>
+<tr><td><code>Task</code></td><td>Một nhiệm vụ có thể làm trên Node đó</td><td>"[INFO] Find a laptop under $1000"</td></tr>
+<tr><td><code>Trajectory</code></td><td>Chuỗi các bước agent thực hiện để hoàn thành Task</td><td>Click search → type text → click result → read</td></tr>
+<tr><td><code>Trace</code></td><td>Đường đi ngắn giữa 2 URL (dùng để định tuyến)</td><td>Homepage → Category → Product (5 steps)</td></tr>
+</table>
+
+<h3>2.2 Thuật toán chính — BFS có hướng dẫn bởi LLM</h3>
+
+<div class="flow-box">
+┌─────────────────────────────────────────────────────────────────┐
+│  GO-BROWSE ALGORITHM (mỗi vòng lặp = 1 node)                    │
+│                                                                  │
+│  1. Lấy node tiếp theo từ hàng đợi BFS                           │
+│                                                                  │
+│  2. PHASE 1 — TASK PROPOSAL:                                    │
+│     PageExplorerAgent → khám phá trang, đề xuất INFO/MOD tasks  │
+│     NavExplorerAgent  → click link, đề xuất NAV tasks           │
+│                                                                  │
+│  3. PHASE 2 — FEASIBILITY CHECK:                                │
+│     SolverAgent thử giải từng task                               │
+│     Evaluator (GPT-4V) đánh giá success/failure → lọc task      │
+│                                                                  │
+│  4. PHASE 3 — TRAJECTORY SAMPLING:                              │
+│     Với mỗi feasible task → tạo thêm trajectory đa dạng          │
+│     (có prefix / không prefix)                                   │
+│                                                                  │
+│  5. PHASE 4 — GRAPH EXPANSION:                                  │
+│     Phát hiện URL mới → thêm node con vào đồ thị                 │
+│     Lưu Trace (đường đi) làm prefix cho solver sau này           │
+└─────────────────────────────────────────────────────────────────┘
+</div>
+
+<h3>2.3 Hệ thống Agent</h3>
+
+<table>
+<tr><th>Agent</th><th>Vai trò</th><th>LLM</th></tr>
+<tr><td><code>PageExplorerAgent</code></td><td>Tự do khám phá trang hiện tại, đề xuất INFO/MOD tasks</td><td>GPT-4o / Claude</td></tr>
+<tr><td><code>NavExplorerAgent</code></td><td>Click link để tìm trang mới, đề xuất NAV tasks, rồi go_back</td><td>Claude 3.7</td></tr>
+<tr><td><code>SolverAgent</code></td><td>Thực hiện một task cụ thể (click, type, scroll...)</td><td>GPT-4o-mini</td></tr>
+<tr><td><code>Evaluator</code></td><td>Dùng GPT-4V đánh giá trajectory thành công hay thất bại</td><td>GPT-4V</td></tr>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PROBLEM                                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="problem">3. Vấn đề: trajectory cũ thiếu ngữ nghĩa</h2>
+
+<p>Trajectory trước cải tiến chỉ là chuỗi hành động <strong>thô</strong>, thiếu thông tin để model học <strong>hiểu</strong> được ý nghĩa của hành động:</p>
+
+<div class="compare-grid">
+<div class="compare-box before">
+<h4>Trước — TrajectoryStep cũ</h4>
+<pre><code>{
+  "action": "click('bid_42')",
+  "parsed_action": "click('bid_42')",
+  "thought": "I need to click...",
+  "observation": { "screenshot": ..., "axtree": ... }
+}</code></pre>
+<p style="font-size:0.85rem; color:var(--red); margin-top:8px;">
+Thiếu: mô tả tự nhiên, goal đang tiến hóa, tọa độ element, URL tracking, task type.
+</p>
+</div>
+<div class="compare-box after">
+<h4>Sau — TrajectoryStep mới</h4>
+<pre><code>{
+  "action": "click('bid_42')",
+  "action_nl": "Click 'Sony WH-1000XM5' in search results",
+  "refined_goal": "Find Sony headphones under $350 on Amazon",
+  "bounding_box": {"x":245,"y":380,"w":600,"h":24},
+  "element_metadata": {"tag":"link","text":"Sony WH-..."},
+  "page_url_before": "amazon.com/s?k=sony",
+  "page_url_after": "amazon.com/s?k=sony",
+  "action_reasoning": "First result matching target product"
+}</code></pre>
+</div>
+</div>
+
+<p><strong>3 thiếu sót chính:</strong></p>
+<ol>
+  <li><strong>Không có mô tả tự nhiên</strong> — Model chỉ thấy <code>click('bid_42')</code>, không hiểu "click vào nút Search"</li>
+  <li><strong>Goal tĩnh</strong> — Task description được propose một lần rồi giữ nguyên, không được cập nhật khi agent khám phá thêm</li>
+  <li><strong>Không có visual grounding</strong> — Screenshot không có annotation, model không biết element nào tương ứng với số nào</li>
+</ol>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- IMPROVEMENTS                                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="improvement">4. 7 Phase cải tiến — Semantic Trajectory</h2>
+
+<p>
+Lấy cảm hứng từ dự án <strong>Explorer</strong> (ACL 2025 Findings), các cải tiến được chia thành 7 phase, triển khai tuần tự.
+<span style="color:var(--green); font-weight:600;">Tất cả đã hoàn thành.</span>
+</p>
+
+<h3>Phase 1 — Thêm semantic fields vào TrajectoryStep</h3>
+<table>
+<tr><th>File</th><th>Thay đổi</th></tr>
+<tr><td><code>webexp/explore/core/trajectory.py</code></td><td>Thêm 7 fields mới: <code>action_nl</code>, <code>refined_goal</code>, <code>action_reasoning</code>, <code>bounding_box</code>, <code>element_metadata</code>, <code>page_url_before</code>, <code>page_url_after</code></td></tr>
+<tr><td><code>webexp/agents/solver_agent.py</code></td><td>Parse <code>action_in_natural_language</code> và <code>refined_goal</code> từ LLM response; extract element metadata từ axtree</td></tr>
+<tr><td><code>webexp/agents/prompt_builders/solver_prompt_builder.py</code></td><td>Prompt yêu cầu LLM output thêm 2 field JSON mới</td></tr>
+</table>
+<p><span class="badge badge-done">Đã xong</span> <span class="badge badge-new">23 tests</span></p>
+
+<h3>Phase 2 — Task Refinement (goal tiến hóa)</h3>
+<p>Goal được cập nhật <strong>ở mỗi bước</strong> khi agent tương tác với website. Ví dụ:</p>
+<div class="flow-box">
+Step 0: "Find a product on Amazon"                    (mơ hồ)
+Step 2: "Find a coffee maker on Amazon"                (có category)
+Step 4: "Find a coffee maker under $100 with 4+ stars" (có constraints)
+</div>
+<p><span class="badge badge-done">Đã xong</span> <span class="badge badge-new">6 tests</span></p>
+
+<h3>Phase 3 — Task Summarization (tóm tắt hậu trajectory)</h3>
+<p>Agent mới <code>TaskSummarizationAgent</code> — sau khi trajectory kết thúc, gọi GPT-4V để tạo mô tả task hoàn chỉnh từ toàn bộ action history + screenshots. Đảm bảo task description khớp với những gì <strong>thực sự đã làm</strong>.</p>
+<p><span class="badge badge-done">Đã xong</span> <span class="badge badge-new">4 tests</span> <span class="badge badge-new">1 file mới</span></p>
+
+<h3>Phase 4 — Set-of-Mark Visual Grounding</h3>
+<p>Port code SoM từ Explorer: screenshot được overlay với numbered tags → mỗi interactive element có một số → agent reference bằng <code>[idx]</code>. Cầu nối giữa pixel và text.</p>
+<p><span class="badge badge-done">Đã xong</span> <span class="badge badge-new">5 tests</span> <span class="badge badge-new">3 files mới</span></p>
+
+<h3>Phase 5 — Enhanced Verification</h3>
+<p>Evaluator không chỉ trả về success/failure mà còn phân loại <strong>task type</strong> (Transaction / Information seeking / Site navigation / Content modification) và đưa ra <strong>failure reason</strong> nếu thất bại.</p>
+<p><span class="badge badge-done">Đã xong</span> <span class="badge badge-new">4 tests</span></p>
+
+<h3>Phase 6 — Better Task Proposal</h3>
+<p>Cải thiện prompt cho PageExplorerAgent: yêu cầu format chuẩn, thêm constraints (budget, rating, location...), ví dụ cụ thể.</p>
+<p><span class="badge badge-done">Đã xong</span></p>
+
+<h3>Phase 7 — CAPTCHA Detection</h3>
+<p>Agent mới <code>CaptchaDetectionAgent</code> — tự động phát hiện CAPTCHA pages để skip, tránh lãng phí LLM calls.</p>
+<p><span class="badge badge-done">Đã xong</span> <span class="badge badge-new">1 test</span> <span class="badge badge-new">1 file mới</span></p>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- RESULTS                                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="result">5. Kết quả kiểm thử</h2>
+
+<div class="success-metric">
+  <div class="num">66/66</div>
+  <div class="desc">
+    <strong>Tất cả tests pass</strong><br>
+    17 parsing + 14 semantic trajectory + 35 edge cases<br>
+    Ngày test: 2026-05-19
+  </div>
+</div>
+
+<table>
+<tr><th>File test</th><th>Số tests</th><th>Mục đích</th></tr>
+<tr><td><code>tests/test_parsing.py</code></td><td>17</td><td>Test parsing functions (extract response, sanitize, element metadata, save/load)</td></tr>
+<tr><td><code>tests/test_semantic_trajectory.py</code></td><td>14</td><td>Test Phase 1-3: semantic fields, roundtrip, backward compat</td></tr>
+<tr><td><code>tests/test_edge_cases.py</code></td><td>35</td><td>Edge cases toàn diện cho tất cả 7 phase + integration tests</td></tr>
+</table>
+
+<h3>5 bugs được phát hiện và sửa</h3>
+<table>
+<tr><th>Bug</th><th>Mức độ</th><th>Mô tả</th></tr>
+<tr><td>#1 — PageExplorerPromptBuilder thiếu <code>use_som</code></td><td><span class="badge badge-fix">Crash</span></td><td>Gọi <code>system_message(use_som=True)</code> gây TypeError</td></tr>
+<tr><td>#2 — NavExplorerPromptBuilder thiếu <code>use_som</code></td><td><span class="badge badge-fix">Crash</span></td><td>Tương tự bug #1</td></tr>
+<tr><td>#3 — Trajectory.load() crash khi final_state=None</td><td><span class="badge badge-fix">Crash</span></td><td>FileNotFoundError khi load trajectory chưa có final_state</td></tr>
+<tr><td>#4 — step_info["misc"] không dùng .get()</td><td><span class="badge badge-fix">Edge</span></td><td>KeyError khi load old-format step_info.json</td></tr>
+<tr><td>#5 — test_parsing.py import sai module name</td><td><span class="badge badge-fix">Test</span></td><td>Relative import fail do thiếu package prefix</td></tr>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- BEFORE VS AFTER                                                       -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="compare">6. Tổng kết: Trước vs Sau</h2>
+
+<table>
+<tr><th>Khía cạnh</th><th>Trước cải tiến</th><th>Sau cải tiến</th></tr>
+<tr>
+  <td>Action representation</td>
+  <td>Chỉ raw action (<code>click('bid_42')</code>)</td>
+  <td><strong>Dual:</strong> raw + natural language + reasoning</td>
+</tr>
+<tr>
+  <td>Task goal</td>
+  <td>Tĩnh — propose một lần</td>
+  <td><strong>Tiến hóa</strong> — refined mỗi step + summarized hậu kỳ</td>
+</tr>
+<tr>
+  <td>Visual grounding</td>
+  <td>Không có</td>
+  <td><strong>Set-of-Mark</strong> — numbered tags trên screenshot</td>
+</tr>
+<tr>
+  <td>Trajectory evaluation</td>
+  <td>Binary success/failure</td>
+  <td>Success/failure + <strong>task type</strong> + failure reason</td>
+</tr>
+<tr>
+  <td>Element metadata</td>
+  <td>Không có</td>
+  <td>Tag, text, role, <strong>bounding box</strong></td>
+</tr>
+<tr>
+  <td>URL tracking</td>
+  <td>Không có per-step URL</td>
+  <td><strong>page_url_before + page_url_after</strong> mỗi step</td>
+</tr>
+<tr>
+  <td>CAPTCHA handling</td>
+  <td>Không có — lãng phí LLM calls</td>
+  <td><strong>Tự động detect & skip</strong></td>
+</tr>
+<tr>
+  <td>Backward compatibility</td>
+  <td>—</td>
+  <td>Old format load đúng (None defaults), old add_step() vẫn hoạt động</td>
+</tr>
+<tr>
+  <td>Test coverage</td>
+  <td>0 tests</td>
+  <td><strong>66 tests</strong> — parsing + model + edge cases + integration</td>
+</tr>
+</table>
+
+<div class="highlight">
+<strong>Điểm cốt lõi:</strong> Mỗi trajectory giờ đây không chỉ là chuỗi hành động mà còn là một <strong>bản ghi có ngữ nghĩa đầy đủ</strong> — model có thể học được cả "làm gì" (action), "tại sao" (reasoning), "ở đâu" (bounding box), và "mục tiêu đang là gì" (refined goal). Điều này giúp dữ liệu huấn luyện chất lượng cao hơn đáng kể.
+</div>
+
+<h3>Cách chạy</h3>
+<pre><code># Activate environment
+conda activate go-browse
+
+# Run tất cả tests
+OPENAI_API_KEY=sk-test python tests/test_parsing.py
+OPENAI_API_KEY=sk-test python tests/test_semantic_trajectory.py
+OPENAI_API_KEY=sk-test python tests/test_edge_cases.py
+
+# Run data collection (với semantic trajectory)
+python -m webexp.explore.algorithms.web_explore -c configs/go_browse_config.yaml
+
+# Training với dữ liệu đã cải tiến
+python train_lora.py</code></pre>
+
+<footer>
+Go-Browse Framework — Báo cáo cải tiến Semantic Trajectory — 05/2026<br>
+Dựa trên mã nguồn thực tế + tài liệu thiết kế trong workspace
+</footer>
+
+</body>
+</html>
