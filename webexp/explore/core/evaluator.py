@@ -3,12 +3,15 @@ from PIL import Image
 from typing import Union, Optional
 from openai import OpenAI
 from openai.types.chat import ChatCompletion
+from dotenv import load_dotenv
 from textwrap import dedent
 import base64
 import io
 import logging
 import numpy as np
 import os
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

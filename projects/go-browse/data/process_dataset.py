@@ -14,8 +14,9 @@ from webexp.agents.trajectory_data import BrowserGymAgentStepData, BrowserGymAge
 
 INCLUDE_PREFIX = False
 
-INPUT_DATA_FILE = "<PLACEHOLDER_FOR_INPUT_FILE.jsonl>"  # Replace with your desired input file path
-OUTPUT_DATA_FILE = "<PLACEHOLDER_FOR_OUTPUT_FILE.jsonl>" # Replace with your desired output file path
+INPUT_DATA_FILE = "projects/go-browse/data/go_browse_shopping_raw.jsonl"
+OUTPUT_DATA_FILE = "projects/go-browse/data/go_browse_shopping_processed.jsonl"
+
 
 PREFIX_PROB = 0
 

@@ -12,6 +12,7 @@ from ...agents.captcha_detection_agent import CaptchaDetectionAgent
 from browsergym.core.env import BrowserEnv
 from browsergym.experiments.loop import EnvArgs
 from dataclasses import dataclass
+from dotenv import load_dotenv
 from omegaconf import OmegaConf as oc
 from pathlib import Path
 from typing import Sequence, List, Dict, Optional
@@ -21,6 +22,8 @@ import os
 import random
 import requests
 import traceback
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -66,6 +69,9 @@ class WebExploreConfig:
         max_feasible_nav_explorer_tasks_per_node (int): Maximum feasible tasks per node for navigation explorers.
         exp_dir (str): Directory for saving exploration data.
         full_reset_url (Optional[str]): URL for full reset.
+        frontier_alpha (float): Weight for Uncertainty (U) in frontier scoring.
+        frontier_beta (float): Weight for Value (V) in frontier scoring.
+        frontier_theta (float): Weight for Diversity (D) in frontier scoring.
     """
     env: Dict
     evaluator: Dict
@@ -81,6 +87,9 @@ class WebExploreConfig:
     max_feasible_page_explorer_tasks_per_node: int
     max_feasible_nav_explorer_tasks_per_node: int
     full_reset_url: Optional[str]
+    frontier_alpha: float = 1.0
+    frontier_beta: float = 1.0
+    frontier_theta: float = 1.0
 
 
 def perform_full_reset(full_reset_url: str, num_retries: int = 3):
@@ -284,6 +293,8 @@ def filter_to_feasible_tasks_for_node(
 
                 trajs.append(traj)
 
+                node.record_trajectory_outcome(traj.success)
+
                 if traj.success:
                     feasible_count += 1
                     break
@@ -335,6 +346,7 @@ def sample_task_solving_trajectories_for_node(
                 traj.misc["needs_prefix"] = True
 
                 node.add_trajectory(traj)
+                node.record_trajectory_outcome(traj.success)
 
             except Exception as e:
                 logger.error(f"Error sampling trajectories for node {node.url} and task {task.goal}: {e}")
@@ -358,6 +370,7 @@ def sample_task_solving_trajectories_for_node(
                 traj.misc["needs_prefix"] = False
 
                 node.add_trajectory(traj)
+                node.record_trajectory_outcome(traj.success)
 
             except Exception as e:
                 logger.error(f"Error sampling trajectories for node {node.url} and task {task.goal}: {e}")
@@ -496,6 +509,10 @@ def web_explore_loop():
         exp_dir=config.exp_dir
     )
     env = env.unwrapped
+    # Add extra HTTP headers to bypass ngrok warning page
+    env.pw_context_kwargs.setdefault("extra_http_headers", {}).update({
+        "ngrok-skip-browser-warning": "true",
+    })
     env.reset()
     root_url = env.page.url
 
@@ -509,7 +526,10 @@ def web_explore_loop():
             root_url=root_url,
             exp_dir=config.exp_dir,
             denylist_patterns=config_dict['denylist_patterns'], 
-            allowlist_patterns=config_dict['allowlist_patterns']
+            allowlist_patterns=config_dict['allowlist_patterns'],
+            alpha=config.frontier_alpha,
+            beta=config.frontier_beta,
+            theta=config.frontier_theta,
         )
     
     try:

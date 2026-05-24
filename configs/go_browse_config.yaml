@@ -7,7 +7,7 @@ env_args:
   # webarena.exploration.66 (reddit)
   # webarena.exploration.51 (shopping)
   # To run on any live website, set task_name to "openended" and provide a start_url in task_kwargs.
-  task_name: <PLACEHOLDER>
+  task_name: webarena.exploration.51
   #task_name: openended
   #task_kwargs:
   #  start_url: https://www.google.com/maps
@@ -20,36 +20,44 @@ env_args:
 evaluator:
   model_name: gpt-4o-2024-05-13
 
-max_nodes: 20
+max_nodes: 10
 resume_from: null # If resuming from a previous, incomplete run, you can specify the specific run directory path here (exp_dir).
 max_feasible_page_explorer_tasks_per_node: 20
 max_feasible_nav_explorer_tasks_per_node: 10
+
+# Frontier scoring: S = α·U + β·V + θ·D
+# α (alpha): weight for Uncertainty — prefers nodes with high variance in task scores
+# β (beta):   weight for Value (exploitation) — prefers nodes with high success rate, decays with visits
+# θ (theta):  weight for Diversity — prefers nodes with high UI/DOM state change
+frontier_alpha: 1.5
+frontier_beta: 1.0
+frontier_theta: 1.0
 
 page_explorers:
   - agent_factory_args:
       name: "PageExplorerAgent"
       model_id: "gpt-4o-2024-08-06"
-      base_url: "$<PLACEHOLDER - API URL for OpenAI>"
-      api_key: "$<PLACEHOLDER - OpenAI API key>"
+      base_url: ${oc.env:OPENAI_BASE_URL}
+      api_key: ${oc.env:OPENAI_API_KEY}
       temperature: 0.7
     max_steps: 20
     retries: 3
 
-  - agent_factory_args:
-      name: "PageExplorerAgent"
-      model_id: "claude-3-7-sonnet-20250219"
-      base_url: "$<PLACEHOLDER - API_URL for Anthropic>"
-      api_key: "$<PLACEHOLDER - Anthropic API key>"
-      temperature: 0.7
-    max_steps: 10
-    retries: 3
+  # - agent_factory_args:
+  #     name: "PageExplorerAgent"
+  #     model_id: "claude-3-7-sonnet-20250219"
+  #     base_url: "$<PLACEHOLDER - API_URL for Anthropic>"
+  #     api_key: "$<PLACEHOLDER - Anthropic API key>"
+  #     temperature: 0.7
+  #   max_steps: 10
+  #   retries: 3
 
 nav_explorers:
   - agent_factory_args:
       name: "NavExplorerAgent"
-      model_id: "claude-3-7-sonnet-20250219"
-      base_url: "$<PLACEHOLDER - API_URL for Anthropic>"
-      api_key: "$<PLACEHOLDER - Anthropic API key>"
+      model_id: "deepseek-chat"
+      base_url: ${oc.env:DEEPSEEK_BASE_URL}
+      api_key: ${oc.env:DEEPSEEK_API_KEY}
       temperature: 0.7
     max_steps: 15
     retries: 3
@@ -57,9 +65,9 @@ nav_explorers:
 feasibility_checkers: 
   - agent_factory_args:
         name: "SolverAgent"
-        model_id: "claude-3-7-sonnet-20250219"
-        base_url: "$<PLACEHOLDER - API_URL for Anthropic>"
-        api_key: "$<PLACEHOLDER - Anthropic API key>"
+        model_id: "deepseek-chat"
+        base_url: ${oc.env:DEEPSEEK_BASE_URL}
+        api_key: ${oc.env:DEEPSEEK_API_KEY}
         temperature: 0.7
         char_limit: 80000
     max_steps: 10
@@ -69,34 +77,37 @@ solvers:
   - agent_factory_args:
         name: "SolverAgent"
         model_id: "gpt-4o-mini-2024-07-18"
-        base_url: "$<PLACEHOLDER - API URL for OpenAI>"
-        api_key: "$<PLACEHOLDER - OpenAI API key>"
+        base_url: ${oc.env:OPENAI_BASE_URL}
+        api_key: ${oc.env:OPENAI_API_KEY}
         temperature: 0.7
         char_limit: 80000
     max_steps: 10
     retries: 2
 
-  - agent_factory_args:
-      name: "SolverAgent"
-      model_id: "Qwen/Qwen2.5-7B-Instruct"
-      base_url: "$<PLACEHOLDER - Inference URL (e.g., vllm) for Qwen model>"
-      temperature: 0.7
-      char_limit: 80000
-    max_steps: 10
-    retries: 2
+  # - agent_factory_args:
+  #     name: "SolverAgent"
+  #     model_id: "Qwen/Qwen2.5-7B-Instruct"
+  #     base_url: "$<PLACEHOLDER - Inference URL (e.g., vllm) for Qwen model>"
+  #     temperature: 0.7
+  #     char_limit: 80000
+  #   max_steps: 10
+  #   retries: 2
 
 
 allowlist_patterns:
-  - <PLACEHOLDER - BASE URL>/.*
+  # - http://192.168.1.31:7770/.*
+  - https://setting-legibly-implicate.ngrok-free.dev/.*
 
 
 denylist_patterns:
   - ".*/admin/admin/system_config"
   - ".*/admin/admin/system_config/.*"
 
-exp_dir: <PLACEHOLDER - Path to user-specified experiment directory>
+exp_dir: ./runs/go_browse_shopping
 
 # You can optionally reset the environment after exploration of each node, by setting the full_reset_url here. 
 # To setup the reset url, copy/clone over the webarena-reset folder to your webarena hosting server and run reset_server.py with fastapi.
 # Note the reset scripts that the reset_server.py uses expects that you set the BASE_URL env var on the server to the public base url of the server.
+# full_reset_url: http://192.168.1.31:8000/reset/all
 full_reset_url: null
+

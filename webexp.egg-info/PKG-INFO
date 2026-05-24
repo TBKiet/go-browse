@@ -2,4 +2,29 @@ Metadata-Version: 2.4
 Name: webexp
 Version: 0.0.1
 License-File: LICENSE
+Requires-Dist: torch>=2.5.0
+Requires-Dist: accelerate>=1.0.0
+Requires-Dist: deepspeed>=0.15.0; platform_system != "Windows"
+Requires-Dist: flash-attn>=2.7.0; platform_system != "Windows"
+Requires-Dist: bitsandbytes>=0.44.0
+Requires-Dist: transformers<4.47.0,>=4.36.0
+Requires-Dist: trl>=0.12.0
+Requires-Dist: peft>=0.13.0
+Requires-Dist: datasets<3.1.0,>=2.14.0
+Requires-Dist: wandb>=0.18.0
+Requires-Dist: tensorboard>=2.18.0
+Requires-Dist: sentencepiece>=0.2.0
+Requires-Dist: protobuf>=5.0.0
+Requires-Dist: huggingface_hub>=0.26.0
+Requires-Dist: fsspec>=2024.0.0
+Requires-Dist: agentlab
+Requires-Dist: browsergym
+Requires-Dist: evaluate<0.5.0,>=0.4.0
+Requires-Dist: kaleido
+Requires-Dist: scikit-learn
+Requires-Dist: liger-kernel; platform_system != "Windows"
+Requires-Dist: omegaconf
+Requires-Dist: pillow
+Requires-Dist: plotly
 Dynamic: license-file
+Dynamic: requires-dist

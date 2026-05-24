@@ -59,7 +59,7 @@ Example config file used for Go-Browse-WA data generation is: `configs/go_browse
 
 For each domain (website) that you want to run data generation for, duplicate/modify the config file by filling in placeholders and then run:
 ```sh
-python -m webexp.explore.algorithms.web_explore -c configs/web_explore_config.yaml
+python -m webexp.explore.algorithms.web_explore -c configs/go_browse_config.yaml
 ```
 
 ### Process Collected Go-Browse Dataset for Training

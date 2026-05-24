@@ -40,6 +40,12 @@ class Node:
     visited: bool
     exp_dir: str
     misc: dict = None
+    # Frontier scoring fields
+    exploration_count: int = 0       # n: number of times visited/sampled
+    success_rate: float = 0.0        # SR: success rate of trajectories from this node
+    total_trajs: int = 0             # Total trajectories run from this node
+    successful_trajs: int = 0        # Successful trajectories from this node
+    embedding: list = None           # Cached embedding for diversity computation
    
     
     def __post_init__(self):
@@ -51,7 +57,11 @@ class Node:
                 "children": self.children,
                 #"prefix_source": self.prefix_source,
                 "visited": self.visited,
-                "misc": self.misc
+                "misc": self.misc,
+                "exploration_count": self.exploration_count,
+                "success_rate": self.success_rate,
+                "total_trajs": self.total_trajs,
+                "successful_trajs": self.successful_trajs,
             }
             with open(os.path.join(self.exp_dir, "node_info.json"), "w") as f:
                 json.dump(node_info, f, indent=4)
@@ -118,7 +128,11 @@ class Node:
             prefixes,
             node_info["visited"],
             load_dir,
-            misc=node_info.get("misc", None) 
+            misc=node_info.get("misc", None),
+            exploration_count=node_info.get("exploration_count", 0),
+            success_rate=node_info.get("success_rate", 0.0),
+            total_trajs=node_info.get("total_trajs", 0),
+            successful_trajs=node_info.get("successful_trajs", 0),
         )
         
     def update_save(self, save_prefix=False, save_info=True):
@@ -128,7 +142,11 @@ class Node:
                 "description": self.description,
                 "children": self.children,
                 "visited": self.visited,
-                "misc": self.misc
+                "misc": self.misc,
+                "exploration_count": self.exploration_count,
+                "success_rate": self.success_rate,
+                "total_trajs": self.total_trajs,
+                "successful_trajs": self.successful_trajs,
             }
             with open(os.path.join(self.exp_dir, "node_info.json"), "w") as f:
                 json.dump(node_info, f, indent=4)
@@ -218,3 +236,11 @@ class Node:
         os.makedirs(trace_save_dir)
         prefix.save(trace_save_dir)
         self.prefixes.append(prefix)
+
+    def record_trajectory_outcome(self, success: bool):
+        """Record a trajectory outcome and update success_rate and exploration_count."""
+        self.total_trajs += 1
+        if success:
+            self.successful_trajs += 1
+        self.success_rate = self.successful_trajs / max(self.total_trajs, 1)
+        self.exploration_count += 1

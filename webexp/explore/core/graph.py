@@ -2,6 +2,7 @@ from __future__ import annotations
 from .node import Node
 from .trace import Trace
 from .trajectory import TrajectoryStep
+from .scoring import FrontierScorer
 from typing import Sequence
 import json
 import logging
@@ -24,7 +25,12 @@ class Graph:
             exp_dir: str, 
             allowlist_patterns: Sequence[str] = tuple(), 
             denylist_patterns: Sequence[str] = tuple(), 
-            resume: bool=False
+            resume: bool=False,
+            # Frontier scoring hyperparameters (S = αU + βV + θD)
+            alpha: float = 1.0,   # Weight for Uncertainty
+            beta: float = 1.0,    # Weight for Value (exploitation)
+            theta: float = 1.0,   # Weight for Diversity
+            epsilon: float = 1e-5, # Small constant to avoid division by zero
         ):
 
         self.nodes = {}
@@ -33,6 +39,10 @@ class Graph:
         self.exp_dir = os.path.join(exp_dir, "graph")
         self.allowlist_patterns = allowlist_patterns
         self.denylist_patterns = denylist_patterns
+        # Frontier scorer
+        self.scorer = FrontierScorer(
+            alpha=alpha, beta=beta, theta=theta, epsilon=epsilon,
+        )
 
         if not resume:
             self.root = self.add_url(root_url, None, [])
@@ -42,6 +52,7 @@ class Graph:
                 "root_url": self.root.url,
                 "allowlist_patterns": self.allowlist_patterns,
                 "denylist_patterns": self.denylist_patterns,
+                "frontier_scoring": self.scorer.to_dict(),
             }
             with open(os.path.join(self.exp_dir, "graph_info.json"), "w") as f:
                 json.dump(graph_info, f, indent=4)
@@ -75,7 +86,21 @@ class Graph:
         if len(self.unexplored_nodes) == 0:
             logger.info("No nodes left to explore.")
             return None
-        return self.unexplored_nodes[0] #TODO: Can add user-defined priortization here.
+
+        # Score all unexplored nodes via FrontierScorer and pick the best one
+        scored_nodes = [
+            (node, self.scorer.compute(node))
+            for node in self.unexplored_nodes
+        ]
+        scored_nodes.sort(key=lambda x: x[1], reverse=True)
+
+        best_node, best_score = scored_nodes[0]
+        breakdown = self.scorer.breakdown(best_node)
+        logger.info(
+            f"Frontier scoring: selected '{best_node.url[:80]}' with score={best_score:.4f} "
+            f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, D={breakdown['D']:.4f})"
+        )
+        return best_node
 
     
     def check_if_url_allowed(self, url: str) -> bool:
@@ -115,7 +140,16 @@ class Graph:
         with open(os.path.join(path, "graph_info.json"), "r") as f:
             graph_info = json.load(f)
         
-        graph = Graph(graph_info["root_url"], path, graph_info["allowlist_patterns"], graph_info["denylist_patterns"], resume=True)
+        # Restore scorer from saved parameters (or use defaults)
+        scoring_dict = graph_info.get("frontier_scoring", {})
+        restored = FrontierScorer.from_dict(scoring_dict)
+        graph = Graph(
+            graph_info["root_url"], path,
+            graph_info["allowlist_patterns"], graph_info["denylist_patterns"],
+            resume=True,
+            alpha=restored.alpha, beta=restored.beta,
+            theta=restored.theta, epsilon=restored.epsilon,
+        )
         graph.root = nodes[graph_info["root_url"]]
         graph.nodes = nodes
         graph.explored_nodes = explored_nodes

@@ -16,23 +16,16 @@ import time
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-VALID_ACTION_PREFIXES = (
-    "click(",
-    "type(",
-    "scroll(",
-    "goto(",
-    "hover(",
-    "press(",
-    "select(",
-    "drag(",
-    "send_msg_to_user(",
-    "report_infeasible(",
-    "fill(",
-    "dblclick(",
-    "keyboard(",
-    "upload_file(",
-    "noop(",
-)
+# All valid action prefixes, dynamically built from the action set.
+# We use a regex approach: any token matching `function_name(` is valid.
+# This avoids hardcoding and having to update when action sets change.
+import re as _re
+
+def _is_action_valid(action: str) -> bool:
+    """Check if action starts with a valid function call pattern (e.g. `click(...)`, `go_back()`)."""
+    return bool(_re.match(r'[a-zA-Z_][a-zA-Z0-9_]*\(', action))
+
+VALID_ACTION_PREFIXES = None  # kept for backwards compatibility, use _is_action_valid instead
 
 def messages_to_string(messages: list[dict]) -> str:
     prompt_text_strings = []
@@ -348,10 +341,10 @@ class SolverAgent(BaseAgent):
             # Use adaptive retry mechanism with character limit reduction
             response = self.make_llm_call_with_adaptive_retry(obs, current_step)
 
-            raw_action = response.choices[0].message.content
+            raw_action = response.choices[0].message.content or ""
             logger.info(f"Raw LLM response (first 500 chars): {raw_action[:500]}")
             logger.info(f"Raw LLM response repr (first 200 chars): {repr(raw_action[:200])}")
-            parsed_response = _extract_full_response(raw_action)
+            parsed_response = _extract_full_response(raw_action) if raw_action else None
             if parsed_response is None:
                 raise ValueError(f"Could not parse action from LLM response. Raw (first 500 chars): {raw_action[:500]}")
             action = parsed_response.get("action")
@@ -372,10 +365,10 @@ class SolverAgent(BaseAgent):
         logger.info(f"Parsed action repr: {repr(action)}")
 
         # Validate the action against known prefixes
-        if not any(action.startswith(prefix) for prefix in VALID_ACTION_PREFIXES):
+        if not _is_action_valid(action):
             raise ValueError(
                 f"Action '{action}' does not start with a valid prefix. "
-                f"Valid prefixes: {VALID_ACTION_PREFIXES}"
+                f"Valid prefixes: any function call pattern, e.g. click(...), go_back(...)"
             )
 
         # Extract element metadata from axtree based on the action's bid
@@ -478,7 +471,7 @@ class SolverAgent(BaseAgent):
                     use_som=self.use_som,
                 )['prompt']
 
-                print(f"Attempt {attempt+1}: Using char_limit={current_char_limit}")
+                print(f"Attempt {attempt+1}: Using char_limit={current_char_limit}, json_mode={use_json_format}")
 
                 client = self.client if attempt == 0 else self.client_long
                 model = self.model_id if attempt == 0 else self.model_id_2
@@ -493,7 +486,24 @@ class SolverAgent(BaseAgent):
                 if use_json_format:
                     kwargs["response_format"] = {"type": "json_object"}
 
-                return client.chat.completions.create(**kwargs)
+                response = client.chat.completions.create(**kwargs)
+
+                # Check for empty/null content (some APIs return success with null content
+                # when json_object format is not supported)
+                content = response.choices[0].message.content
+                if not content:
+                    if use_json_format:
+                        logger.warning("LLM returned empty content with json_object format, retrying without JSON mode")
+                        use_json_format = False
+                        attempt += 1
+                        if attempt >= max_attempts:
+                            raise ValueError("LLM returned empty content after all retries")
+                        current_char_limit = int(current_char_limit * 0.95)
+                        continue
+                    else:
+                        raise ValueError("LLM returned empty content even without JSON mode")
+
+                return response
 
             except Exception as e:
                 err_msg = str(e).lower()

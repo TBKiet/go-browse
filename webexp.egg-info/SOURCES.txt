@@ -1,12 +1,14 @@
 LICENSE
 README.md
 setup.py
+tests/test_edge_cases.py
 tests/test_parsing.py
 tests/test_semantic_trajectory.py
 webexp/__init__.py
 webexp.egg-info/PKG-INFO
 webexp.egg-info/SOURCES.txt
 webexp.egg-info/dependency_links.txt
+webexp.egg-info/requires.txt
 webexp.egg-info/top_level.txt
 webexp/agents/__init__.py
 webexp/agents/base_agent.py

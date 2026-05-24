@@ -1,12 +1,12 @@
 torch>=2.5.0
 accelerate>=1.0.0
-deepspeed>=0.15.0
-flash-attn>=2.7.0
+deepspeed>=0.15.0; platform_system != "Windows"
+flash-attn>=2.7.0; platform_system != "Windows"
 bitsandbytes>=0.44.0
-transformers>=4.46.0
+transformers>=4.36.0,<4.47.0
 trl>=0.12.0
 peft>=0.13.0
-datasets>=3.0.0
+datasets>=2.14.0,<3.1.0
 wandb>=0.18.0
 tensorboard>=2.18.0
 sentencepiece>=0.2.0
@@ -17,10 +17,10 @@ fsspec>=2024.0.0
 # Existing project deps
 agentlab
 browsergym
-evaluate
+evaluate>=0.4.0,<0.5.0
 kaleido
 scikit-learn
-liger-kernel
+liger-kernel; platform_system != "Windows"
 omegaconf
 pillow
 plotly
