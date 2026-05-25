@@ -11,14 +11,116 @@ Where:
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Sequence
 import math
 import logging
+import re
+from textwrap import dedent
+from openai import OpenAI
+import os
 
 if TYPE_CHECKING:
     from .node import Node
 
 logger = logging.getLogger(__name__)
+
+
+# ------------------------------------------------------------------
+# Lightweight LLM-based confidence predictor for task candidates
+# ------------------------------------------------------------------
+
+class LookaheadPredictor:
+    """Zero-shot lookahead: uses a small/cheap LLM to propose plausible
+    interaction actions on a page *before* any agent runs.
+
+    Each candidate has an action description and a confidence score (0-1).
+    The *variance* of these confidence scores becomes the Uncertainty (U)
+    component of the frontier score.
+
+    This is the key enabler for scoring nodes in the frontier without
+    running expensive PageExplorer/NavExplorer episodes.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "deepseek-chat",
+        max_tokens: int = 256,
+        num_candidates: int = 5,
+    ):
+        self.client = OpenAI(
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url=os.getenv("DEEPSEEK_BASE_URL", None),
+        )
+        self.model_name = model_name
+        self.max_tokens = max_tokens
+        self.num_candidates = num_candidates
+
+    def propose(self, axtree_snippet: str) -> list[dict]:
+        """Propose {num_candidates} likely user interaction actions with
+        confidence scores, based on the page's accessibility tree.
+
+        Returns:
+            list[dict]: Each dict has keys "action" (str) and "confidence" (float).
+        """
+        prompt = dedent(f"""\
+            You are looking at a web page's accessibility tree (first 3500 chars below).
+            Propose the {self.num_candidates} most likely actions a user would take on this page.
+
+            For each action, provide a confidence score (0.0 = very unlikely, 1.0 = almost certain)
+            that this action is feasible and makes sense on this page.
+
+            Page accessibility tree:
+            {axtree_snippet[:3500]}
+
+            Respond with ONLY a JSON array. No explanation, no markdown.
+            Example:
+            [{{"action": "Search for a product in the search bar", "confidence": 0.95}},
+             {{"action": "Click on a category link in the navigation menu", "confidence": 0.70}}]
+            """)
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=self.max_tokens,
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+            raw = response.choices[0].message.content.strip()
+            # Parse JSON — handle both array and {"candidates": [...]} wrappers
+            import json
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                # Try common wrapper keys
+                for key in ("candidates", "actions", "predictions"):
+                    if key in data and isinstance(data[key], list):
+                        data = data[key]
+                        break
+            if not isinstance(data, list):
+                logger.warning(f"Lookahead: unexpected response format (not a list): {raw[:200]}")
+                return self._fallback()
+            # Validate and cap
+            results = []
+            for item in data[:self.num_candidates]:
+                if isinstance(item, dict) and "action" in item:
+                    conf = float(item.get("confidence", 0.5))
+                    results.append({
+                        "action": str(item["action"]),
+                        "confidence": max(0.0, min(1.0, conf)),
+                    })
+            if results:
+                return results
+        except Exception as e:
+            logger.warning(f"Lookahead proposal failed: {e}")
+
+        return self._fallback()
+
+    def _fallback(self) -> list[dict]:
+        """Return neutral candidates when prediction fails."""
+        return [
+            {"action": f"generic_interaction_{i}", "confidence": 0.5}
+            for i in range(self.num_candidates)
+        ]
 
 
 class FrontierScorer:
@@ -84,29 +186,35 @@ class FrontierScorer:
 
         U = σ / (μ + ε)
 
-        σ: variance of task success rates at this node.
-        μ: mean of those success rates.
+        σ: variance of lookahead confidence scores at this node.
+        μ: mean of those confidence scores.
         ε: small constant.
 
-        Fresh nodes (no exploration tasks) get U = 1.0 to encourage exploration.
+        Data source: `node.lookahead_candidates` — a list of
+        {"action": str, "confidence": float} produced by the zero-shot
+        LookaheadPredictor when the node first entered the frontier.
+
+        Interpretation:
+          - High σ (e.g. confidences = [0.1, 0.5, 0.9]): the model is
+            uncertain about what interactions are possible → high exploration
+            potential.
+          - Low σ (e.g. confidences = [0.95, 0.98, 0.99]): the page is
+            predictable → low exploration potential.
+
+        Fresh nodes (no lookahead data yet) get U = 1.0 to encourage
+        initial exploration.
         """
-        if not node.exploration_tasks:
+        candidates = node.lookahead_candidates
+        if not candidates:
             return 1.0
 
-        task_scores = []
-        for task in node.exploration_tasks.values():
-            total = len(task.positive_trajs) + len(task.negative_trajs)
-            if total > 0:
-                task_scores.append(len(task.positive_trajs) / total)
-            else:
-                task_scores.append(0.5)
+        confidences = [c["confidence"] for c in candidates if isinstance(c, dict)]
+        if not confidences:
+            return 1.0
 
-        if not task_scores:
-            return 0.5
-
-        n = len(task_scores)
-        mu = sum(task_scores) / n
-        sigma = sum((s - mu) ** 2 for s in task_scores) / n  # variance
+        n = len(confidences)
+        mu = sum(confidences) / n
+        sigma = sum((c - mu) ** 2 for c in confidences) / n  # variance
         return sigma / (mu + self.epsilon)
 
     # ------------------------------------------------------------------

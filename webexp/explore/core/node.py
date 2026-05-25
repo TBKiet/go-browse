@@ -46,6 +46,9 @@ class Node:
     total_trajs: int = 0             # Total trajectories run from this node
     successful_trajs: int = 0        # Successful trajectories from this node
     embedding: list = None           # Cached embedding for diversity computation
+    frontier_score: float = 0.0      # Last computed composite frontier score S
+    frontier_breakdown: dict = None  # Last computed breakdown {U, V, D, alpha, beta, theta}
+    lookahead_candidates: list = None  # Zero-shot predictions: [{"action": str, "confidence": float}, ...]
    
     
     def __post_init__(self):
@@ -62,6 +65,9 @@ class Node:
                 "success_rate": self.success_rate,
                 "total_trajs": self.total_trajs,
                 "successful_trajs": self.successful_trajs,
+                "frontier_score": self.frontier_score,
+                "frontier_breakdown": self.frontier_breakdown,
+                "lookahead_candidates": self.lookahead_candidates,
             }
             with open(os.path.join(self.exp_dir, "node_info.json"), "w") as f:
                 json.dump(node_info, f, indent=4)
@@ -133,6 +139,9 @@ class Node:
             success_rate=node_info.get("success_rate", 0.0),
             total_trajs=node_info.get("total_trajs", 0),
             successful_trajs=node_info.get("successful_trajs", 0),
+            frontier_score=node_info.get("frontier_score", 0.0),
+            frontier_breakdown=node_info.get("frontier_breakdown", None),
+            lookahead_candidates=node_info.get("lookahead_candidates", None),
         )
         
     def update_save(self, save_prefix=False, save_info=True):
@@ -147,6 +156,9 @@ class Node:
                 "success_rate": self.success_rate,
                 "total_trajs": self.total_trajs,
                 "successful_trajs": self.successful_trajs,
+                "frontier_score": self.frontier_score,
+                "frontier_breakdown": self.frontier_breakdown,
+                "lookahead_candidates": self.lookahead_candidates,
             }
             with open(os.path.join(self.exp_dir, "node_info.json"), "w") as f:
                 json.dump(node_info, f, indent=4)

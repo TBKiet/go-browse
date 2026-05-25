@@ -28,6 +28,15 @@ class Task:
             with open(os.path.join(self.exp_dir, "task_info.json"), "w") as f:
                 json.dump(task_info, f, indent=4)
 
+    def save_info(self):
+        """Persist task metadata (goal, misc) to disk."""
+        task_info = {
+            "goal": self.goal,
+            "misc": self.misc,
+        }
+        with open(os.path.join(self.exp_dir, "task_info.json"), "w") as f:
+            json.dump(task_info, f, indent=4)
+
     def is_feasible(self) -> bool:
         return len(self.positive_trajs) > 0
     

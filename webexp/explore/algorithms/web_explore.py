@@ -6,6 +6,7 @@ from ..core.node import Node
 from ..core.task import Task
 from ..core.trace import Trace
 from ..core.trajectory import Trajectory
+
 from ...agents.base_agent import AgentFactory
 from ...agents.task_summarization_agent import TaskSummarizationAgent
 from ...agents.captcha_detection_agent import CaptchaDetectionAgent
@@ -21,6 +22,7 @@ import logging
 import os
 import random
 import requests
+import sys
 import traceback
 
 load_dotenv()
@@ -33,6 +35,39 @@ if not logger.handlers:
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+
+# Track per-node file handlers so we can cleanly remove them between nodes
+_node_log_handlers: dict[str, logging.Handler] = {}
+
+def _setup_node_logging(node: Node):
+    """Add a file handler that writes all logs to a per-node file.
+
+    The log file is saved at: <node.exp_dir>/explore.log
+    Captures logs from ALL modules (web_explore, episode, solver_agent, etc.)
+    at INFO level and above.
+    """
+    global _node_log_handlers
+
+    # Remove previous node's file handler if any
+    for existing_handler in _node_log_handlers.values():
+        existing_handler.close()
+        logging.getLogger().removeHandler(existing_handler)
+    _node_log_handlers.clear()
+
+    log_path = os.path.join(node.exp_dir, "explore.log")
+    os.makedirs(node.exp_dir, exist_ok=True)
+
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    ))
+
+    # Attach to the root logger so ALL module logs are captured
+    logging.getLogger().addHandler(file_handler)
+    _node_log_handlers[node.exp_dir] = file_handler
+
+    logger.info(f"Per-node logging enabled → {log_path}")
 
 @dataclass
 class WebExploreAgentConfig:
@@ -90,6 +125,7 @@ class WebExploreConfig:
     frontier_alpha: float = 1.0
     frontier_beta: float = 1.0
     frontier_theta: float = 1.0
+    lookahead_model: Optional[str] = None
 
 
 def perform_full_reset(full_reset_url: str, num_retries: int = 3):
@@ -253,7 +289,8 @@ def sample_task_candidates_for_node(
         retry += 1
 
 
-    return node.add_tasks(tasks, task_misc={'agent_info': explorer.get_config()})
+    task_misc = {'agent_info': explorer.get_config()}
+    return node.add_tasks(tasks, task_misc=task_misc)
 
 
 def filter_to_feasible_tasks_for_node(
@@ -530,6 +567,7 @@ def web_explore_loop():
             alpha=config.frontier_alpha,
             beta=config.frontier_beta,
             theta=config.frontier_theta,
+            lookahead_model=getattr(config, 'lookahead_model', None),
         )
     
     try:
@@ -539,6 +577,9 @@ def web_explore_loop():
         while curr_node and exploration_count < config.max_nodes:
             
             logger.info(f"Exploring node {curr_node.url} ...")
+
+            # Set up per-node log file to capture all logs for this node
+            _setup_node_logging(curr_node)
 
             # Phase 7: Check for CAPTCHA before exploring
             obs = get_fresh_obs(env)

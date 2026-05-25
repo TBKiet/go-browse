@@ -33,6 +33,12 @@ frontier_alpha: 1.5
 frontier_beta: 1.0
 frontier_theta: 1.0
 
+# Zero-shot lookahead model: a small/cheap LLM that proposes action
+# candidates with confidence scores when a new URL enters the frontier.
+# Set to null to disable lookahead (U defaults to 1.0 for all fresh nodes).
+# Example: "deepseek-chat", "gpt-4o-mini", etc.
+lookahead_model: deepseek-chat
+
 page_explorers:
   - agent_factory_args:
       name: "PageExplorerAgent"

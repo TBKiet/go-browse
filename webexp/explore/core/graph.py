@@ -2,8 +2,8 @@ from __future__ import annotations
 from .node import Node
 from .trace import Trace
 from .trajectory import TrajectoryStep
-from .scoring import FrontierScorer
-from typing import Sequence
+from .scoring import FrontierScorer, LookaheadPredictor
+from typing import Sequence, Optional
 import json
 import logging
 import os
@@ -31,6 +31,8 @@ class Graph:
             beta: float = 1.0,    # Weight for Value (exploitation)
             theta: float = 1.0,   # Weight for Diversity
             epsilon: float = 1e-5, # Small constant to avoid division by zero
+            # Lookahead
+            lookahead_model: Optional[str] = None,
         ):
 
         self.nodes = {}
@@ -43,6 +45,9 @@ class Graph:
         self.scorer = FrontierScorer(
             alpha=alpha, beta=beta, theta=theta, epsilon=epsilon,
         )
+        # Lookahead predictor (lazy-init, only when lookahead_model is set)
+        self._lookahead_predictor = None
+        self._lookahead_model = lookahead_model
 
         if not resume:
             self.root = self.add_url(root_url, None, [])
@@ -73,7 +78,55 @@ class Graph:
             parent.update_save(save_prefix=False)
         self.nodes[url] = node
         self.unexplored_nodes.append(node)
+
+        # --- Zero-shot lookahead: score this node before any agent runs ---
+        self._run_lookahead(node)
+
         return node
+
+    def _run_lookahead(self, node: Node):
+        """Run the zero-shot LookaheadPredictor on a newly discovered node.
+
+        This populates node.lookahead_candidates so that FrontierScorer
+        can compute Uncertainty (U) without running expensive agents.
+
+        Silently skips if no lookahead model is configured or if the
+        predictor fails (node stays scorable with U=1.0).
+        """
+        if not self._lookahead_model:
+            return
+
+        if node.lookahead_candidates is not None:
+            return  # Already scored
+
+        # Lazy-init predictor
+        if self._lookahead_predictor is None:
+            self._lookahead_predictor = LookaheadPredictor(model_name=self._lookahead_model)
+
+        try:
+            # We need the axtree for this node. The graph doesn't own the
+            # browser env, so we rely on the prefix traces which contain
+            # observation snapshots. Use the most recent prefix's last step.
+            axtree = None
+            if node.prefixes:
+                last_prefix = node.prefixes[-1]
+                if last_prefix.steps and last_prefix.steps[-1].observation:
+                    axtree = last_prefix.steps[-1].observation.get("axtree_txt")
+
+            if not axtree:
+                logger.debug(f"Lookahead: no axtree available for {node.url[:80]}, skipping.")
+                return
+
+            candidates = self._lookahead_predictor.propose(axtree)
+            node.lookahead_candidates = candidates
+            node.update_save(save_prefix=False, save_info=True)
+            confs = [c["confidence"] for c in candidates]
+            logger.info(
+                f"Lookahead for '{node.url[:80]}': {len(candidates)} candidates, "
+                f"confidences=[{', '.join(f'{c:.2f}' for c in confs)}]"
+            )
+        except Exception as e:
+            logger.warning(f"Lookahead failed for '{node.url[:80]}': {e}")
     
     def add_to_explored(self, node: Node):
         self.explored_nodes.append(node)
@@ -100,7 +153,42 @@ class Graph:
             f"Frontier scoring: selected '{best_node.url[:80]}' with score={best_score:.4f} "
             f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, D={breakdown['D']:.4f})"
         )
+
+        # Save frontier score/breakdown on the selected node
+        best_node.frontier_score = best_score
+        best_node.frontier_breakdown = breakdown
+        best_node.update_save(save_prefix=False, save_info=True)
+
+        # Save a frontier snapshot for ALL unexplored nodes (for analysis/debugging)
+        self._save_frontier_snapshot(scored_nodes)
+
         return best_node
+
+    def _save_frontier_snapshot(self, scored_nodes: list):
+        """Save a snapshot of the current frontier ranking to the graph directory."""
+        snapshot = []
+        for node, score in scored_nodes:
+            bd = self.scorer.breakdown(node)
+            lookahead_confs = (
+                [c["confidence"] for c in node.lookahead_candidates]
+                if node.lookahead_candidates else None
+            )
+            snapshot.append({
+                "url": node.url[:120],
+                "score": round(score, 6),
+                "U": round(bd["U"], 6),
+                "V": round(bd["V"], 6),
+                "D": round(bd["D"], 6),
+                "exploration_count": node.exploration_count,
+                "success_rate": node.success_rate,
+                "total_trajs": node.total_trajs,
+                "num_tasks": len(node.tasks),
+                "num_exploration_tasks": len(node.exploration_tasks),
+                "lookahead_confidences": lookahead_confs,
+            })
+        frontier_file = os.path.join(self.exp_dir, "frontier_snapshot.json")
+        with open(frontier_file, "w") as f:
+            json.dump(snapshot, f, indent=4)
 
     
     def check_if_url_allowed(self, url: str) -> bool:
