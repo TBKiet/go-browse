@@ -15,27 +15,32 @@ class Task:
     negative_trajs: list[Trajectory]
     exp_dir: str
     misc: dict = None
+    summarized_goal: str | None = None
     
     def __post_init__(self):
-        if not os.path.exists(self.exp_dir):
-            os.makedirs(self.exp_dir)
-            os.makedirs(os.path.join(self.exp_dir, "positive_trajs"))
-            os.makedirs(os.path.join(self.exp_dir, "negative_trajs"))
-            task_info = {
-                "goal": self.goal,
-                "misc": self.misc,
-            }
-            with open(os.path.join(self.exp_dir, "task_info.json"), "w") as f:
-                json.dump(task_info, f, indent=4)
+        os.makedirs(self.exp_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.exp_dir, "positive_trajs"), exist_ok=True)
+        os.makedirs(os.path.join(self.exp_dir, "negative_trajs"), exist_ok=True)
+        task_info_path = os.path.join(self.exp_dir, "task_info.json")
+        if not os.path.exists(task_info_path):
+            self.save_info()
 
     def save_info(self):
         """Persist task metadata (goal, misc) to disk."""
         task_info = {
             "goal": self.goal,
+            "summarized_goal": self.summarized_goal,
             "misc": self.misc,
         }
         with open(os.path.join(self.exp_dir, "task_info.json"), "w") as f:
             json.dump(task_info, f, indent=4)
+
+    def update_summarized_goal(self, summarized_goal: str):
+        """Persist a refined semantic task description without overwriting the original goal."""
+        if not summarized_goal:
+            return
+        self.summarized_goal = summarized_goal
+        self.save_info()
 
     def is_feasible(self) -> bool:
         return len(self.positive_trajs) > 0
@@ -75,7 +80,14 @@ class Task:
             traj_load_dir = os.path.join(load_dir, "negative_trajs", f"{i}")
             negative_trajs.append(Trajectory.load(traj_load_dir, load_steps=load_steps, load_images=load_images))
         
-        return Task(task_info["goal"], positive_trajs, negative_trajs, load_dir, task_info["misc"])
+        return Task(
+            task_info["goal"],
+            positive_trajs,
+            negative_trajs,
+            load_dir,
+            task_info.get("misc", {}),
+            task_info.get("summarized_goal"),
+        )
     
     @staticmethod
     def process_raw_goal(goal: str) -> tuple[str, list[str]]:

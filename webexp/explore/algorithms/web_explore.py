@@ -484,6 +484,31 @@ def _summarize_node_trajectories(node: Node, model_name: str):
                 traj.misc["summarized_goal"] = summarized
                 traj.save_info()
 
+        best_summary = _select_best_summarized_goal(task)
+        if best_summary:
+            task.update_summarized_goal(best_summary)
+            logger.info(f"Task-level summarized goal saved for '{task.goal[:100]}': {best_summary[:200]}")
+
+
+def _select_best_summarized_goal(task: Task) -> str | None:
+    """Prefer successful trajectory summaries, then the most common available summary."""
+    positive_summaries = [
+        traj.misc.get("summarized_goal")
+        for traj in task.positive_trajs
+        if traj.misc and traj.misc.get("summarized_goal")
+    ]
+    if positive_summaries:
+        return max(positive_summaries, key=lambda summary: (positive_summaries.count(summary), len(summary)))
+
+    all_summaries = [
+        traj.misc.get("summarized_goal")
+        for traj in [*task.positive_trajs, *task.negative_trajs]
+        if traj.misc and traj.misc.get("summarized_goal")
+    ]
+    if all_summaries:
+        return max(all_summaries, key=lambda summary: (all_summaries.count(summary), len(summary)))
+    return None
+
 
 def web_explore_loop():
 

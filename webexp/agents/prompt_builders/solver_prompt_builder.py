@@ -141,14 +141,18 @@ class SolverPromptBuilder(BasePromptBuilder):
 
         user_content = [
             self.goal_message(goal),
+            self.task_state_message(goal, refined_goal, past_refined_goals, actions, past_errors),
             self.axtree_message(axtree),
             self.action_space_message(self.action_set),
             action_history,
         ]
 
-        # Include evolving refined goal context if available
-        if refined_goal:
-            user_content.append(self.refined_goal_message(refined_goal))
+        if self._should_realign(actions, refined_goal):
+            user_content.append(self.realignment_check_message(goal, refined_goal))
+
+        failed_attempts = self.failed_attempts_message(actions, past_errors)
+        if failed_attempts:
+            user_content.append(failed_attempts)
 
         user_messages = {
             "role": "user",
@@ -199,6 +203,96 @@ class SolverPromptBuilder(BasePromptBuilder):
         return {
             "type": "text",
             "text": "# History of past actions\n" + newline.join(lines)
+        }
+
+    def task_state_message(
+        self,
+        original_goal: str,
+        refined_goal: str | None,
+        past_refined_goals: list[str | None] | None,
+        actions: list[str | None],
+        errors: list[str | None],
+    ):
+        """Keep the immutable user goal next to the evolving state."""
+        known_facts = self._known_facts_from_history(past_refined_goals, errors)
+        progress_lines = self._progress_lines(actions, errors)
+
+        current_objective = refined_goal or original_goal
+        text = (
+            "# Task State\n"
+            "Original goal (immutable):\n"
+            f"{original_goal}\n\n"
+            "Current objective (must stay aligned with original goal):\n"
+            f"{current_objective}\n\n"
+            "Progress:\n"
+            f"{chr(10).join(progress_lines)}\n\n"
+            "Known facts and negative observations:\n"
+            f"{chr(10).join(known_facts) if known_facts else '- none yet'}\n\n"
+            "Use this state as memory. Do not replace the original goal with a local "
+            "page obstacle such as scrolling, clicking, typing, waiting, or making an element visible."
+        )
+        return {"type": "text", "text": text}
+
+    def _known_facts_from_history(self, past_refined_goals: list[str | None] | None, errors: list[str | None]) -> list[str]:
+        facts: list[str] = []
+        if past_refined_goals:
+            for goal in past_refined_goals[-5:]:
+                if goal and goal not in facts:
+                    facts.append(f"- Prior objective: {goal}")
+        for i, error in enumerate(errors):
+            if error:
+                error_short = error[:180] + "..." if len(error) > 180 else error
+                facts.append(f"- Step {i + 1} failed: {error_short}")
+        return facts[-8:]
+
+    def _progress_lines(self, actions: list[str | None], errors: list[str | None]) -> list[str]:
+        total = len(actions)
+        failures = sum(1 for error in errors if error)
+        successes = max(total - failures, 0)
+        lines = [
+            f"- Steps attempted: {total}",
+            f"- Actions without browser errors: {successes}",
+            f"- Failed actions: {failures}",
+        ]
+        if actions:
+            recent = [a for a in actions[-3:] if a]
+            if recent:
+                lines.append(f"- Recent actions: {'; '.join(recent)}")
+        return lines
+
+    def failed_attempts_message(self, actions: list[str | None], errors: list[str | None]):
+        failures = []
+        for i, (action, error) in enumerate(zip(actions, errors)):
+            if action and error:
+                action_short = action[:100] + "..." if len(action) > 100 else action
+                error_short = error[:180] + "..." if len(error) > 180 else error
+                failures.append(f"{len(failures) + 1}. step {i + 1}: {action_short} -> {error_short}")
+        if not failures:
+            return None
+        return {
+            "type": "text",
+            "text": (
+                "# Failed Attempts\n"
+                f"{chr(10).join(failures[-5:])}\n\n"
+                "Treat these as persistent negative observations. Do not retry the same failed "
+                "action unless the page state or target element has clearly changed."
+            )
+        }
+
+    def _should_realign(self, actions: list[str | None], refined_goal: str | None) -> bool:
+        return bool(refined_goal and actions and len(actions) % 4 == 0)
+
+    def realignment_check_message(self, original_goal: str, refined_goal: str | None):
+        return {
+            "type": "text",
+            "text": (
+                "# Re-alignment Check\n"
+                f"Original goal: {original_goal}\n"
+                f"Current objective: {refined_goal or original_goal}\n\n"
+                "Before choosing the next action, verify that the current objective still moves "
+                "toward the original goal. If progress has stalled, choose a fundamentally "
+                "different approach instead of continuing the same local tactic."
+            )
         }
 
     def _count_consecutive_same_failures(self, actions: list[str | None], errors: list[str | None]) -> int:
@@ -375,7 +469,9 @@ class SolverPromptBuilder(BasePromptBuilder):
                     - The "thought" key contains all your reasoning.
                     - The "action" key must contain exactly ONE action.
                     - The "action_in_natural_language" key should describe the action in human-readable form (e.g., "Click on the 'Add to Cart' button for the Sony headphones").
-                    - The "refined_goal" key should update the overall task description with new constraints/details you've discovered (e.g., budget, product name, dates). If the task hasn't changed, repeat the current goal.
+                    - The "refined_goal" key must describe the desired task state or outcome, not the browser action. Good: "Cart contains product X with quantity 1". Bad: "Click Add to Cart", "Scroll down", "Type in the search box".
+                    - The "refined_goal" key must stay aligned with the immutable original goal. Use it for learned constraints/details (e.g., budget, product name, dates, stock status). If the task has not changed, repeat the current task-level goal.
+                    - After each action, verify whether the desired state was achieved. If an item/page is confirmed unavailable after reasonable alternatives, set refined_goal to a task-level infeasibility objective and use report_infeasible("reason").
                     """
                 )
         }
@@ -393,10 +489,10 @@ class SolverPromptBuilder(BasePromptBuilder):
         return  {
                 "type": "text",
                 "text": (
-                    "# Current Task Understanding (evolving)\n"
+                    "# Current Objective (evolving, task-level only)\n"
                     f"{refined_goal}\n\n"
-                    "As you learn more details (specific products, prices, dates, etc.), "
-                    "update the task description in your refined_goal output."
+                    "As you learn more details (specific products, prices, dates, availability, etc.), "
+                    "update refined_goal as a desired state. Do not describe the next action here."
                 )
         }
 

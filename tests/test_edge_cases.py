@@ -13,12 +13,14 @@ from PIL import Image
 from webexp.agents.solver_agent import (
     _extract_full_response,
     _extract_element_metadata,
+    _looks_like_action_level_goal,
     sanitize_action,
     extract_action_and_thought,
 )
 
 # Phase 1: Trajectory data model
 from webexp.explore.core.trajectory import Trajectory, TrajectoryStep, _extract_text_obs
+from webexp.explore.core.task import Task
 
 # Phase 5: Evaluator
 from webexp.explore.core.evaluator import extract_content, build_vision_eval_prompt
@@ -199,6 +201,16 @@ def test_sanitize_action_preserves_valid_content():
     print("OK: sanitize_action preserves valid content")
 
 
+def test_action_level_refined_goal_detection():
+    """Action-level refined goals should be rejected before they overwrite task state."""
+    assert _looks_like_action_level_goal("Click the Add to Cart button")
+    assert _looks_like_action_level_goal("Scroll down to reveal products")
+    assert _looks_like_action_level_goal("Type laptop into the search box")
+    assert not _looks_like_action_level_goal("Cart contains the Sony headphones with quantity 1")
+    assert not _looks_like_action_level_goal("Find and report the price of the Sony headphones")
+    print("OK: action-level refined_goal detection")
+
+
 # ============================================================================
 # Phase 1: TrajectoryStep / Trajectory edge cases
 # ============================================================================
@@ -297,6 +309,24 @@ def test_trajectory_save_load_full_roundtrip():
         assert step.page_url_after == "https://amazon.com/cart"
         assert step.misc["step_meta"] == "extra"
     print("OK: Trajectory full save/load roundtrip")
+
+
+def test_task_summarized_goal_roundtrip():
+    """Task stores summarized_goal without overwriting the original goal."""
+    with tempfile.TemporaryDirectory() as d:
+        task = Task.from_goal("Original proposed goal", d, misc={"source": "test"})
+        task.update_summarized_goal("Refined semantic goal")
+
+        with open(os.path.join(d, "task_info.json"), "r") as f:
+            info = json.load(f)
+        assert info["goal"] == "Original proposed goal"
+        assert info["summarized_goal"] == "Refined semantic goal"
+
+        loaded = Task.load(d, load_steps=False, load_images=False)
+        assert loaded.goal == "Original proposed goal"
+        assert loaded.summarized_goal == "Refined semantic goal"
+        assert loaded.misc["source"] == "test"
+    print("OK: Task summarized_goal roundtrip")
 
 
 # ============================================================================
@@ -573,11 +603,13 @@ if __name__ == "__main__":
         # Phase 1: Sanitize edge cases
         test_sanitize_action_unicode_whitespace,
         test_sanitize_action_preserves_valid_content,
+        test_action_level_refined_goal_detection,
         # Phase 1: Trajectory data model
         test_trajectory_step_without_screenshot,
         test_trajectory_multiple_steps_semantic,
         test_trajectory_from_goal_defaults,
         test_trajectory_save_load_full_roundtrip,
+        test_task_summarized_goal_roundtrip,
         # Phase 5: Evaluator
         test_extract_content_standard,
         test_extract_content_missing_tag,

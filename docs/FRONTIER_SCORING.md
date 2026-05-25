@@ -1,108 +1,492 @@
-# Frontier Scoring — Hướng dẫn chi tiết
+# Frontier Scoring — Hướng dẫn chi tiết theo code hiện tại
 
 ## Tổng quan
 
-Frontier Scoring là cơ chế ưu tiên hóa các node (URL) trong hàng đợi khám phá (frontier) dựa trên công thức đa mục tiêu:
+`FrontierScorer` là module dùng để ưu tiên chọn node/URL tiếp theo trong frontier của Go-Browse. Thay vì luôn chọn node theo FIFO, mỗi node được gán một điểm tổng hợp:
 
-$$S = \alpha U + \beta V + \theta D$$
+$$
+S = \alpha U + \beta V + \theta D
+$$
 
-Thay vì chọn node theo FIFO như trước, hệ thống giờ đây tính điểm cho tất cả node chưa khám phá và chọn node có điểm cao nhất ở mỗi bước lặp.
+Trong đó:
 
-## Công thức chi tiết
+- `U` — **Uncertainty**: độ bất định ước lượng từ các action candidate do `LookaheadPredictor` dự đoán.
+- `V` — **Value**: giá trị khai thác dựa trên success rate của các trajectory đã chạy từ node.
+- `D` — **Diversity**: độ đa dạng UI/DOM dựa trên khoảng cách cosine giữa các embedding trạng thái liên tiếp.
 
-### 1. Uncertainty ($U$) — Sự bất định
+Node có score cao nhất sẽ được chọn để explore trước.
 
-$$U = \frac{\sigma}{\mu + \varepsilon}$$
+Điểm quan trọng của phiên bản code hiện tại là: **không phải mọi thành phần đều được tính từ dữ liệu exploration thật ngay từ đầu**. Với node mới, hệ thống dùng một phần giá trị mặc định hoặc giá trị lookahead để có thể chấm điểm trước khi chạy PageExplorer/NavExplorer thật.
 
-- **Ý nghĩa**: Đo lường tiềm năng khám phá các tác vụ mới tại node.
-- **$\sigma$**: Phương sai (variance) của tỷ lệ thành công (success rate) giữa các exploration task tại node.
-- **$\mu$**: Giá trị trung bình của các tỷ lệ thành công đó.
-- **$\varepsilon$**: Hằng số rất nhỏ (mặc định $10^{-5}$) để tránh chia cho 0.
-- **Giá trị mặc định cho node mới**: `1.0` — khuyến khích khám phá node chưa từng được ghé thăm.
+---
 
-**Cách tính** (pure Python, không numpy):
+## 1. Luồng hoạt động tổng quát
+
+### Bước 1 — Node được thêm vào frontier
+
+Khi một URL mới được phát hiện và thêm vào frontier, node đó có thể chưa có trajectory, chưa có success rate và chưa có embedding.
+
+Nếu có accessibility tree snippet, hệ thống có thể dùng `LookaheadPredictor` để dự đoán trước một số action khả thi trên trang:
 
 ```python
-task_scores = []
-for task in node.exploration_tasks.values():
-    total = len(task.positive_trajs) + len(task.negative_trajs)
-    if total > 0:
-        task_scores.append(len(task.positive_trajs) / total)
-    else:
-        task_scores.append(0.5)
-
-n = len(task_scores)
-mu = sum(task_scores) / n
-sigma = sum((s - mu) ** 2 for s in task_scores) / n  # variance (σ)
-U = sigma / (mu + epsilon)
+node.lookahead_candidates = lookahead_predictor.propose(axtree_snippet)
 ```
 
-### 2. Value ($V$) — Giá trị khai thác
-
-$$V = SR \cdot \frac{1}{\log(n + 2)}$$
-
-- **Ý nghĩa**: Ưu tiên node có tỷ lệ thành công cao nhưng giảm dần khi đã khai thác nhiều lần.
-- **$SR$ (Success Rate)**: Tỷ lệ thành công của các trajectory đã thực thi từ node này.
-- **$n$**: Số lần node đã được ghé thăm/lấy mẫu (exploration count).
-- **$\frac{1}{\log(n + 2)}$**: Hàm suy giảm — càng khai thác nhiều, giá trị càng giảm mượt mà. Dùng `n+2` thay vì `n+1` để đảm bảo mẫu số luôn dương ngay cả khi `n=0`.
-
-**Cách tính**:
+Mỗi candidate có dạng:
 
 ```python
-sr = node.success_rate if node.total_trajs > 0 else 0.5
-n = max(node.exploration_count, 0)
-penalty = 1.0 / math.log(n + 2)
-V = sr * penalty
+{
+    "action": "Search for a product in the search bar",
+    "confidence": 0.95,
+}
 ```
 
-### 3. Diversity ($D$) — Tính đa dạng
+Các confidence score này được dùng để tính `U`.
 
-$$D = \frac{1}{m} \sum_{i=1}^{m} \text{cos\_distance}(\text{embedding}_i, \text{embedding}_{i+1})$$
+### Bước 2 — Tính score cho từng node trong frontier
 
-- **Ý nghĩa**: Đo lường sự thay đổi giao diện/DOM khi tương tác tại node. Các node có biến đổi UI lớn thường chứa nhiều chức năng phong phú.
-- **$\text{embedding}_i$**: Vector đại diện cho trạng thái giao diện tại bước $i$.
-- **$\text{cos\_distance}$**: Khoảng cách Cosine = $1 - \frac{a \cdot b}{\|a\| \|b\|}$.
-- **Giá trị mặc định khi không có embedding**: `0.5`.
-
-**Cách tính**:
+Với mỗi node, `FrontierScorer.compute(node)` gọi:
 
 ```python
-def _cosine_distance(a, b, eps=1e-10):
+U = self.uncertainty(node)
+V = self.value(node)
+D = self.diversity(node)
+S = self.alpha * U + self.beta * V + self.theta * D
+```
+
+### Bước 3 — Chọn node có score cao nhất
+
+Graph sẽ sort các node chưa explore theo score giảm dần:
+
+```python
+scored_nodes = [(node, self.scorer.compute(node))
+                for node in self.unexplored_nodes]
+scored_nodes.sort(key=lambda x: x[1], reverse=True)
+best_node, best_score = scored_nodes[0]
+```
+
+Node `best_node` sẽ được lấy ra để chạy vòng explore tiếp theo.
+
+---
+
+## 2. `LookaheadPredictor` — dự đoán action trước khi explore thật
+
+### Mục đích
+
+`LookaheadPredictor` là một predictor nhẹ, dùng LLM rẻ để nhìn vào accessibility tree của trang và đề xuất một số action mà người dùng có thể thực hiện.
+
+Mục tiêu của nó là tạo dữ liệu prior cho node mới, trước khi tốn chi phí chạy PageExplorer/NavExplorer hoặc solver thật.
+
+### Input
+
+```python
+axtree_snippet: str
+```
+
+Đây là đoạn accessibility tree, thường bị cắt còn khoảng 3500 ký tự đầu:
+
+```python
+axtree_snippet[:3500]
+```
+
+### Output
+
+```python
+list[dict]
+```
+
+Ví dụ:
+
+```python
+[
+    {"action": "Search for a product in the search bar", "confidence": 0.95},
+    {"action": "Click on a category link", "confidence": 0.70},
+    {"action": "Open the shopping cart", "confidence": 0.40},
+]
+```
+
+### Fallback
+
+Nếu LLM call lỗi, parse JSON lỗi, hoặc output không đúng format, predictor trả về các candidate trung lập:
+
+```python
+[
+    {"action": "generic_interaction_0", "confidence": 0.5},
+    {"action": "generic_interaction_1", "confidence": 0.5},
+    ...
+]
+```
+
+Khi đó uncertainty sẽ thấp vì các confidence đều bằng nhau.
+
+### Lưu ý kỹ thuật
+
+Trong code hiện tại, prompt yêu cầu model trả về JSON array, nhưng API lại dùng:
+
+```python
+response_format={"type": "json_object"}
+```
+
+Vì vậy model có thể trả về object dạng:
+
+```python
+{
+    "candidates": [
+        {"action": "...", "confidence": 0.9}
+    ]
+}
+```
+
+Code hiện tại đã xử lý các wrapper key phổ biến:
+
+```python
+"candidates", "actions", "predictions"
+```
+
+---
+
+## 3. Công thức tổng hợp
+
+```python
+def compute(self, node: Node) -> float:
+    U = self.uncertainty(node)
+    V = self.value(node)
+    D = self.diversity(node)
+    return self.alpha * U + self.beta * V + self.theta * D
+```
+
+Và hàm debug:
+
+```python
+def breakdown(self, node: Node) -> dict:
+    U = self.uncertainty(node)
+    V = self.value(node)
+    D = self.diversity(node)
+    S = self.alpha * U + self.beta * V + self.theta * D
+    return {
+        "score": S,
+        "U": U,
+        "V": V,
+        "D": D,
+        "alpha": self.alpha,
+        "beta": self.beta,
+        "theta": self.theta,
+    }
+```
+
+---
+
+## 4. Uncertainty (`U`) — độ bất định lookahead
+
+### Công thức trong code hiện tại
+
+$$
+U = \frac{\sigma}{\mu + \varepsilon}
+$$
+
+Trong code hiện tại:
+
+- `μ` là trung bình các confidence score do `LookaheadPredictor` sinh ra.
+- `σ` trong comment đang được gọi là variance, nhưng thực tế biến `sigma` đang chứa **variance**, không phải standard deviation.
+- `ε` là hằng số nhỏ để tránh chia cho 0, mặc định `1e-5`.
+
+Code hiện tại:
+
+```python
+def uncertainty(self, node: Node) -> float:
+    candidates = node.lookahead_candidates
+    if not candidates:
+        return 1.0
+
+    confidences = [c["confidence"] for c in candidates if isinstance(c, dict)]
+    if not confidences:
+        return 1.0
+
+    n = len(confidences)
+    mu = sum(confidences) / n
+    sigma = sum((c - mu) ** 2 for c in confidences) / n  # variance
+    return sigma / (mu + self.epsilon)
+```
+
+### Ý nghĩa
+
+`U` hiện tại **không còn được tính từ success rate của các exploration task thật**. Nó được tính từ độ phân tán của các confidence score mà LLM lookahead dự đoán.
+
+Nói cách khác:
+
+```text
+U cao  → các action candidate có confidence phân hóa mạnh.
+U thấp → các action candidate có confidence gần giống nhau.
+```
+
+Ví dụ:
+
+```python
+confidences = [0.95, 0.80, 0.30, 0.10]
+```
+
+Các confidence rất khác nhau, nên variance cao hơn → `U` cao hơn.
+
+```python
+confidences = [0.80, 0.78, 0.82, 0.79]
+```
+
+Các confidence gần nhau, nên variance thấp → `U` thấp hơn.
+
+### Với node mới
+
+Nếu node chưa có `lookahead_candidates`, code trả về:
+
+```python
+U = 1.0
+```
+
+Đây là cold-start default để khuyến khích node mới được thử ít nhất một lần.
+
+### Điểm cần ghi nhớ
+
+Trong tài liệu cũ, `U` được mô tả là variance của success rate giữa các task. Điều đó **không khớp với code hiện tại**. Theo code hiện tại, `U` phải được hiểu là:
+
+> Độ bất định ước lượng trước exploration, tính từ variance của confidence score trong các action candidate do `LookaheadPredictor` sinh ra.
+
+---
+
+## 5. Value (`V`) — giá trị khai thác
+
+### Công thức
+
+$$
+V = SR \cdot \frac{1}{\log(n + 2)}
+$$
+
+Trong đó:
+
+- `SR` là success rate của các trajectory đã chạy từ node.
+- `n` là `exploration_count`, số lần node đã được ghé thăm/lấy mẫu.
+- `1 / log(n + 2)` là penalty giảm dần để tránh chọn mãi một node.
+
+Code hiện tại:
+
+```python
+def value(self, node: Node) -> float:
+    sr = node.success_rate if node.total_trajs > 0 else 0.5
+    n = max(node.exploration_count, 0)
+    penalty = 1.0 / math.log(n + 2)
+    return sr * penalty
+```
+
+### Ý nghĩa
+
+`V` là phần exploitation của score:
+
+```text
+V cao  → node từng tạo ra nhiều trajectory thành công và chưa bị khai thác quá nhiều.
+V thấp → node ít thành công hoặc đã bị explore nhiều lần.
+```
+
+Ví dụ:
+
+```text
+Node A: SR = 0.8, exploration_count = 1  → V tương đối cao
+Node B: SR = 0.8, exploration_count = 30 → V thấp hơn vì bị phạt theo log
+```
+
+### Với node chưa có trajectory
+
+Nếu node chưa có trajectory:
+
+```python
+node.total_trajs = 0
+```
+
+thì code dùng:
+
+```python
+sr = 0.5
+```
+
+Nghĩa là `V` lúc này không phải value thật, mà là **prior trung lập**.
+
+Với `n = 0`:
+
+```python
+V = 0.5 * (1 / math.log(2))
+```
+
+Vì `math.log` là log tự nhiên, nên:
+
+```text
+1 / log(2) ≈ 1.4427
+V ≈ 0.7213
+```
+
+Do đó, ở node mới, `V` có thể lớn hơn 0.5.
+
+### Điểm cần ghi nhớ
+
+`V` chỉ phản ánh success rate thật sau khi node đã có trajectory. Trước đó, nó chỉ là giá trị mặc định để node mới vẫn có điểm trong frontier.
+
+---
+
+## 6. Diversity (`D`) — độ đa dạng UI/DOM
+
+### Công thức
+
+$$
+D = \frac{1}{m} \sum_{i=1}^{m} \text{cos\_distance}(embedding_i, embedding_{i+1})
+$$
+
+Trong đó:
+
+$$
+\text{cos\_distance}(a,b) = 1 - \frac{a \cdot b}{\|a\|\|b\|}
+$$
+
+Code hiện tại:
+
+```python
+@staticmethod
+def cosine_distance(a: List[float], b: List[float], eps: float = 1e-10) -> float:
     dot = sum(ai * bi for ai, bi in zip(a, b))
     norm_a = math.sqrt(sum(ai * ai for ai in a))
     norm_b = math.sqrt(sum(bi * bi for bi in b))
     cos_sim = dot / (norm_a * norm_b + eps)
     return 1.0 - cos_sim
 
-# Tính D
-if node.embedding is None or len(node.embedding) < 2:
-    D = 0.5
-else:
+
+def diversity(self, node: Node) -> float:
+    if node.embedding is None or len(node.embedding) < 2:
+        return 0.5
+
     distances = []
     for i in range(len(node.embedding) - 1):
-        distances.append(_cosine_distance(node.embedding[i], node.embedding[i + 1]))
-    D = sum(distances) / len(distances)
+        dist = self.cosine_distance(node.embedding[i], node.embedding[i + 1])
+        distances.append(dist)
+    return sum(distances) / len(distances) if distances else 0.5
 ```
 
-## Files đã thay đổi
+### Ý nghĩa
 
-### 1. `webexp/explore/core/node.py`
+`D` đo xem trong quá trình tương tác với node, trạng thái UI/DOM có thay đổi nhiều không.
 
-**Thêm các trường dữ liệu:**
+```text
+D cao  → các state liên tiếp khác nhau nhiều, node có thể có nhiều chức năng/luồng tương tác.
+D thấp → UI ít thay đổi, node có thể tĩnh hoặc ít chức năng.
+```
 
-| Trường | Kiểu | Mô tả |
-|--------|------|-------|
-| `exploration_count` | `int` | Số lần node đã được ghé thăm/lấy mẫu (n) |
-| `success_rate` | `float` | Tỷ lệ thành công của các trajectory (SR) |
-| `total_trajs` | `int` | Tổng số trajectory đã chạy từ node này |
+Ví dụ node có nhiều tab, dropdown, form, filter, modal:
+
+```text
+state 1: product edit page
+state 2: mở tab Inventory
+state 3: mở dropdown Stock Status
+state 4: mở tab Advanced Pricing
+```
+
+Các state khác nhau nhiều → cosine distance cao hơn → `D` cao hơn.
+
+### Với node chưa có embedding
+
+Nếu node chưa có ít nhất 2 embedding:
+
+```python
+D = 0.5
+```
+
+Đây là neutral default. Nó không phải diversity thật.
+
+### Điểm cần ghi nhớ
+
+`D` chỉ có ý nghĩa sau khi node đã được tương tác qua nhiều state và `node.embedding` đã được populate. Với node mới, `D = 0.5` chỉ là giá trị mặc định.
+
+---
+
+## 7. Cách hiểu score với node mới và node đã explore
+
+### Node mới chưa explore
+
+Với node mới, thường chưa có trajectory và embedding.
+
+Nếu chưa có lookahead candidates:
+
+```text
+U = 1.0
+V = 0.5 / log(2) ≈ 0.7213
+D = 0.5
+```
+
+Nếu có lookahead candidates:
+
+```text
+U = variance(confidence_scores) / mean(confidence_scores)
+V = 0.5 / log(2) ≈ 0.7213
+D = 0.5
+```
+
+Nghĩa là node mới được chấm chủ yếu bằng:
+
+- độ bất định lookahead `U`, nếu có;
+- prior value `V`;
+- neutral diversity `D`.
+
+### Node đã explore
+
+Sau khi node đã có trajectory và embedding:
+
+```text
+U = vẫn tính từ lookahead_candidates theo code hiện tại
+V = success_rate thật, có penalty theo exploration_count
+D = mean cosine distance thật giữa các embedding state
+```
+
+Lưu ý: code hiện tại **không tự chuyển `U` sang dùng task success rate thật**. Nếu muốn `U` dùng observed task uncertainty, cần sửa code riêng.
+
+---
+
+## 8. Files đã thay đổi
+
+### 8.1 `webexp/explore/core/scoring.py`
+
+Module chính chứa:
+
+```python
+class LookaheadPredictor:
+    def propose(axtree_snippet: str) -> list[dict]
+    def _fallback() -> list[dict]
+
+class FrontierScorer:
+    def compute(node) -> float
+    def breakdown(node) -> dict
+    def uncertainty(node) -> float
+    def value(node) -> float
+    def diversity(node) -> float
+    def cosine_distance(a, b) -> float
+    def to_dict() -> dict
+    def from_dict(d) -> FrontierScorer
+```
+
+Trong đó:
+
+- `LookaheadPredictor` tạo `lookahead_candidates` từ accessibility tree.
+- `FrontierScorer` tính score tổng hợp `S = αU + βV + θD`.
+
+### 8.2 `webexp/explore/core/node.py`
+
+Theo logic hiện tại, node cần có các trường sau để scoring hoạt động đầy đủ:
+
+| Trường | Kiểu | Mục đích |
+|---|---|---|
+| `lookahead_candidates` | `list[dict]` | Danh sách action candidate và confidence do `LookaheadPredictor` sinh ra |
+| `exploration_count` | `int` | Số lần node đã được explore/lấy mẫu |
+| `success_rate` | `float` | Tỷ lệ trajectory thành công từ node |
+| `total_trajs` | `int` | Tổng số trajectory đã chạy từ node |
 | `successful_trajs` | `int` | Số trajectory thành công |
-| `embedding` | `list` | Danh sách các embedding vector cho diversity |
+| `embedding` | `list[list[float]]` hoặc `None` | Danh sách embedding của các UI/DOM state |
 
-**Phương thức mới:**
+Phương thức cập nhật outcome:
 
 ```python
 def record_trajectory_outcome(self, success: bool):
-    """Ghi nhận kết quả trajectory và cập nhật success_rate + exploration_count."""
     self.total_trajs += 1
     if success:
         self.successful_trajs += 1
@@ -110,45 +494,37 @@ def record_trajectory_outcome(self, success: bool):
     self.exploration_count += 1
 ```
 
-**Cập nhật:** `__post_init__`, `update_save()`, `load()` — persist/restore các trường mới.
+### 8.3 `webexp/explore/core/graph.py`
 
-### 2. `webexp/explore/core/scoring.py` (module mới)
-
-Module `FrontierScorer` chứa toàn bộ logic tính điểm, tách biệt hoàn toàn khỏi `Graph`.
+Graph giữ một instance của scorer:
 
 ```python
-class FrontierScorer:
-    def compute(node) -> float       # S = α·U + β·V + θ·D
-    def breakdown(node) -> dict      # Trả về {score, U, V, D, alpha, beta, theta}
-    def uncertainty(node) -> float   # U = σ / (μ + ε)
-    def value(node) -> float         # V = SR · (1 / log(n+2))
-    def diversity(node) -> float     # D = mean cosine distance
-    def to_dict() -> dict            # Serialize params
-    def from_dict(d) -> FrontierScorer  # Deserialize
+self.scorer = FrontierScorer(
+    alpha=frontier_alpha,
+    beta=frontier_beta,
+    theta=frontier_theta,
+)
 ```
 
-### 3. `webexp/explore/core/graph.py`
-
-**Thay đổi:** `Graph` giờ chỉ giữ một instance `self.scorer = FrontierScorer(...)` và gọi nó.
+Khi chọn node tiếp theo:
 
 ```python
-# get_next_node() đơn giản hóa:
 def get_next_node(self):
     scored_nodes = [(node, self.scorer.compute(node))
                     for node in self.unexplored_nodes]
     scored_nodes.sort(key=lambda x: x[1], reverse=True)
     best_node, best_score = scored_nodes[0]
     breakdown = self.scorer.breakdown(best_node)
-    logger.info(f"Selected '{best_node.url}' score={best_score:.4f} "
-                f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, D={breakdown['D']:.4f})")
+    logger.info(
+        f"Selected '{best_node.url}' score={best_score:.4f} "
+        f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, D={breakdown['D']:.4f})"
+    )
     return best_node
 ```
 
-Tất cả logic scoring (`_compute_uncertainty`, `_compute_value`, `_compute_diversity`, `_cosine_distance`) đã được chuyển sang `scoring.py`.
+### 8.4 `webexp/explore/algorithms/web_explore.py`
 
-### 4. `webexp/explore/algorithms/web_explore.py`
-
-**Config mới** trong `WebExploreConfig`:
+Config mới trong `WebExploreConfig`:
 
 ```python
 frontier_alpha: float = 1.0
@@ -156,57 +532,37 @@ frontier_beta: float = 1.0
 frontier_theta: float = 1.0
 ```
 
-**Tích hợp:** Truyền scoring params vào `Graph()` và gọi `node.record_trajectory_outcome()` tại:
-- `filter_to_feasible_tasks_for_node()` — sau mỗi feasibility check
-- `sample_task_solving_trajectories_for_node()` — sau mỗi trajectory (có prefix và không prefix)
+Gọi cập nhật outcome sau mỗi trajectory hoặc feasibility check:
 
-### 5. `configs/go_browse_config.yaml`
+```python
+node.record_trajectory_outcome(success)
+```
+
+Nếu dùng lookahead, cần có bước tạo candidate khi node được thêm vào frontier hoặc trước khi scoring:
+
+```python
+node.lookahead_candidates = lookahead_predictor.propose(axtree_snippet)
+```
+
+### 8.5 `configs/go_browse_config.yaml`
 
 ```yaml
 # Frontier scoring: S = α·U + β·V + θ·D
-# α (alpha): weight cho Uncertainty — ưu tiên node có task score phân hóa cao
-# β (beta):   weight cho Value — ưu tiên node có success rate cao, giảm dần theo số lần visit
-# θ (theta):  weight cho Diversity — ưu tiên node có UI/DOM thay đổi nhiều
+# α: weight cho Lookahead Uncertainty
+# β: weight cho Value / success-rate exploitation
+# θ: weight cho UI/DOM Diversity
 frontier_alpha: 1.0
 frontier_beta: 1.0
 frontier_theta: 1.0
 ```
 
-## Cách điều chỉnh hành vi
-
-### Tăng cường khám phá (Exploration)
-```yaml
-frontier_alpha: 2.0   # Tăng trọng số Uncertainty
-frontier_beta: 0.5    # Giảm trọng số Value
-frontier_theta: 0.5
-```
-
-### Tăng cường khai thác (Exploitation)
-```yaml
-frontier_alpha: 0.5
-frontier_beta: 2.0    # Tăng trọng số Value
-frontier_theta: 0.5
-```
-
-### Ưu tiên đa dạng UI
-```yaml
-frontier_alpha: 0.5
-frontier_beta: 0.5
-frontier_theta: 2.0   # Tăng trọng số Diversity
-```
-
-### FIFO (hành vi cũ)
-```yaml
-frontier_alpha: 0.0
-frontier_beta: 0.0
-frontier_theta: 0.0   # Tất cả node có điểm 0 → chọn node đầu tiên
-```
-
 ---
 
-## 2. Embedding cho Diversity
+## 9. Embedding cho Diversity
 
-### 2.1 Module `webexp/explore/core/embedding.py`
+### 9.1 Module `webexp/explore/core/embedding.py`
+
+Có thể dùng:
 
 ```python
 from webexp.explore.core.embedding import (
@@ -215,15 +571,20 @@ from webexp.explore.core.embedding import (
 )
 ```
 
-**`compute_screenshot_embedding(screenshot)`** — 2 bước:
-1. GPT-4o-mini mô tả screenshot → text caption
-2. `text-embedding-3-small` embed caption → vector
+### 9.2 `compute_screenshot_embedding(screenshot)`
 
-**`compute_dom_embedding(dom_text)`** — 1 bước: embed DOM text trực tiếp.
+Cách hoạt động:
 
-### 2.2 Tích hợp vào exploration
+1. Dùng GPT-4o-mini mô tả screenshot thành text caption.
+2. Dùng `text-embedding-3-small` để embed caption thành vector.
 
-Trong callback post_step, khi có screenshot:
+### 9.3 `compute_dom_embedding(dom_text)`
+
+Cách hoạt động:
+
+1. Embed DOM/accessibility tree text trực tiếp bằng embedding model.
+
+### 9.4 Tích hợp trong post-step callback
 
 ```python
 if "screenshot" in obs:
@@ -234,62 +595,134 @@ if "screenshot" in obs:
         node.embedding.append(emb)
 ```
 
-### 2.3 Chi phí
+### 9.5 Khi nào `D` có hiệu lực
 
-Mỗi lần gọi: ~$0.00015 (GPT-4o-mini + embedding). Với 1000 bước ~ $0.15.
+- Cần ít nhất 2 embedding vector.
+- Nếu không có embedding hoặc chỉ có 1 embedding: `D = 0.5`.
+- Có thể tắt ảnh hưởng của diversity bằng:
 
-### 2.4 Khi nào Diversity có hiệu lực
-
-- Cần ≥ 2 embedding vector để tính D
-- Không có embedding → D = 0.5 (neutral)
-- Có thể tắt: `frontier_theta: 0.0`
+```yaml
+frontier_theta: 0.0
+```
 
 ---
 
-## 3. Bảng chọn Hyperparameter
+## 10. Cách điều chỉnh hành vi
 
-### 3.1 Chiến lược cơ bản
+### Balanced
+
+```yaml
+frontier_alpha: 1.0
+frontier_beta: 1.0
+frontier_theta: 1.0
+```
+
+Dùng khi chưa biết nên ưu tiên thành phần nào.
+
+### Ưu tiên lookahead exploration
+
+```yaml
+frontier_alpha: 2.0
+frontier_beta: 0.5
+frontier_theta: 0.5
+```
+
+Dùng khi muốn ưu tiên node có action candidate phân hóa mạnh, tức là page có vẻ còn nhiều điều chưa chắc chắn.
+
+### Ưu tiên exploitation
+
+```yaml
+frontier_alpha: 0.5
+frontier_beta: 2.0
+frontier_theta: 0.5
+```
+
+Dùng khi muốn thu thêm trajectory từ node đã từng tạo kết quả tốt.
+
+### Ưu tiên UI diversity
+
+```yaml
+frontier_alpha: 0.5
+frontier_beta: 0.5
+frontier_theta: 2.0
+```
+
+Dùng cho website có nhiều form, dropdown, modal, tab hoặc dashboard nhiều tương tác.
+
+### Gần giống FIFO / baseline
+
+```yaml
+frontier_alpha: 0.0
+frontier_beta: 0.0
+frontier_theta: 0.0
+```
+
+Khi tất cả score bằng 0, thứ tự chọn phụ thuộc vào thứ tự node trong `unexplored_nodes` và cách sort ổn định của Python. Trường hợp này có thể dùng để debug hoặc so sánh với baseline.
+
+---
+
+## 11. Bảng chọn hyperparameter
+
+### 11.1 Theo mục tiêu
 
 | Mục tiêu | α | β | θ | Khi nào dùng |
-|----------|:-:|:-:|:-:|-------------|
-| **Balanced** (mặc định) | 1.0 | 1.0 | 1.0 | Không chắc nên chọn gì |
-| **FIFO** (tắt scoring) | 0.0 | 0.0 | 0.0 | Debug, so sánh baseline |
-| **Pure exploration** | 2.0 | 0.0 | 0.0 | Website mới, cần khám phá hết |
-| **Pure exploitation** | 0.0 | 2.0 | 0.0 | Chỉ muốn thu thêm trajectory từ node đã biết |
-| **UI diversity focus** | 0.5 | 0.5 | 2.0 | Website nhiều tính năng ẩn (form, menu) |
+|---|:-:|:-:|:-:|---|
+| Balanced | 1.0 | 1.0 | 1.0 | Chưa chắc nên chọn gì |
+| FIFO-like | 0.0 | 0.0 | 0.0 | Debug hoặc baseline |
+| Lookahead exploration | 2.0 | 0.5 | 0.5 | Muốn ưu tiên node có confidence phân hóa mạnh |
+| Exploitation | 0.5 | 2.0 | 0.5 | Muốn thu thêm trajectory từ node có success rate cao |
+| UI diversity focus | 0.5 | 0.5 | 2.0 | Website nhiều tương tác ẩn |
 
-### 3.2 Chiến lược theo đặc thù website
+### 11.2 Theo loại website
 
 | Loại website | α | β | θ | Lý do |
-|-------------|:-:|:-:|:-:|-------|
-| **E-commerce** | 1.5 | 1.0 | 1.0 | Nhiều category, cần khám phá trước |
-| **Admin dashboard** | 0.5 | 1.0 | 2.0 | Ít URL, mỗi trang nhiều tương tác |
-| **Wiki / tài liệu** | 2.0 | 0.5 | 0.0 | Nội dung tĩnh, cần phủ rộng |
-| **Social media** | 1.0 | 1.0 | 1.5 | Nội dung động, diversity quan trọng |
-| **Form-heavy** | 0.5 | 1.0 | 2.0 | Form giống nhau, khai thác luồng đã biết |
-
-### 3.3 Cách đọc log để điều chỉnh
-
-Log mẫu:
-```
-Frontier scoring: selected 'https://...' with score=1.5234
-  (U=0.8712, V=0.4311, D=0.5000, α=1.00, β=1.00, θ=1.00) [explored=3]
-```
-
-| Log pattern | Vấn đề | Giải pháp |
-|-------------|--------|-----------|
-| `U` luôn ≈ 1.0 với mọi node | Quá nhiều node mới, không có đủ exploration tasks | Giảm α hoặc tăng `max_feasible_page_explorer_tasks_per_node` |
-| `V` luôn ≈ 0.0 | Không có trajectory nào thành công | Giảm β, tăng solver retries |
-| `D` luôn = 0.5 | Chưa có embedding | Tích hợp `compute_screenshot_embedding` |
-| Một node được chọn liên tục | α, β không cân bằng | Dùng schedule `explore_first` |
-| Chọn node ngẫu nhiên | Điểm quá gần nhau | Tăng ε hoặc θ=0 |
+|---|:-:|:-:|:-:|---|
+| E-commerce | 1.5 | 1.0 | 1.0 | Nhiều category/product page, cần khám phá rộng |
+| Admin dashboard | 0.5 | 1.0 | 2.0 | Ít URL hơn nhưng mỗi trang nhiều control |
+| Wiki / tài liệu | 2.0 | 0.5 | 0.0 | Nội dung tĩnh, diversity UI ít quan trọng |
+| Social media/forum | 1.0 | 1.0 | 1.5 | Nhiều trạng thái động và tương tác |
+| Form-heavy website | 0.5 | 1.0 | 2.0 | Form/dropdown/modal quan trọng |
 
 ---
 
-## 5. Lưu ý kỹ thuật
+## 12. Cách đọc log để điều chỉnh
 
-- **Không phụ thuộc numpy**: Toàn bộ tính toán dùng `math` và pure Python.
-- **Diversity cần embedding**: `node.embedding` cần được populate qua `embedding.py`. Mặc định D = 0.5.
-- **Logging**: Log đầy đủ U, V, D, α, β, θ và số node đã explore.
-- **Persistent**: Scoring fields lưu trong `node_info.json`, scorer params lưu trong `graph_info.json`.
-- **Backward compatible**: Load graph cũ → dùng giá trị mặc định.
+Log mẫu:
+
+```text
+Selected 'https://...' score=1.5234 (U=0.8712, V=0.4311, D=0.5000)
+```
+
+| Log pattern | Ý nghĩa | Cách xử lý |
+|---|---|---|
+| `U` luôn = 1.0 | Nhiều node không có `lookahead_candidates` | Kiểm tra nơi gọi `LookaheadPredictor.propose()` |
+| `U` luôn gần 0.0 | Lookahead confidence quá giống nhau hoặc fallback toàn 0.5 | Kiểm tra prompt/API/parse output |
+| `V` cao ở node mới | Do prior `sr=0.5` và `1/log(2)` | Đây là hành vi hiện tại của code; giảm `β` nếu không muốn prior value ảnh hưởng mạnh |
+| `V` luôn ≈ 0.0 | Hầu như không có trajectory thành công | Giảm `β`, tăng solver retries, kiểm tra reward model |
+| `D` luôn = 0.5 | Chưa có đủ embedding | Kiểm tra tích hợp `compute_screenshot_embedding` hoặc `compute_dom_embedding` |
+| Một node được chọn lặp lại nhiều | `β` hoặc `θ` quá cao, penalty chưa đủ mạnh | Giảm `β`, tăng exploration pressure bằng `α`, hoặc thêm novelty bonus nếu cần |
+| Score các node quá gần nhau | Các prior/default giống nhau | Bảo đảm lookahead chạy cho node mới hoặc thêm discovery score |
+
+---
+
+## 13. Lưu ý kỹ thuật
+
+- Code không phụ thuộc numpy; các phép tính dùng `math` và pure Python.
+- `U` hiện tại dùng `node.lookahead_candidates`, không dùng success rate giữa các task thật.
+- `V` dùng success rate thật nếu có trajectory, nếu không dùng prior `0.5`.
+- `D` cần ít nhất 2 embedding vector, nếu không trả về `0.5`.
+- `math.log` trong code là log tự nhiên, nên `1 / log(2) > 1`.
+- `sigma` trong `uncertainty()` hiện đang là variance, dù tên biến là `sigma`.
+- `FrontierScorer.to_dict()` và `from_dict()` dùng để serialize/restore `alpha`, `beta`, `theta`, `epsilon`.
+- Nếu load graph cũ không có field mới, cần đảm bảo `Node` có default cho `lookahead_candidates`, `exploration_count`, `success_rate`, `total_trajs`, `successful_trajs`, `embedding`.
+
+---
+
+## 14. Tóm tắt ngắn
+
+```text
+U = độ bất định từ lookahead confidence, dùng được cả trước khi explore thật nếu đã có axtree snippet.
+V = giá trị khai thác từ success rate trajectory, nhưng node mới dùng prior 0.5.
+D = độ đa dạng UI/DOM từ embedding state liên tiếp, node mới dùng default 0.5.
+S = αU + βV + θD, node có S cao nhất được chọn từ frontier.
+```

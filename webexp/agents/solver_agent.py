@@ -27,6 +27,26 @@ def _is_action_valid(action: str) -> bool:
 
 VALID_ACTION_PREFIXES = None  # kept for backwards compatibility, use _is_action_valid instead
 
+ACTION_LEVEL_GOAL_VERBS = {
+    "click", "press", "type", "scroll", "wait", "hover", "select", "choose",
+    "open", "close", "go", "navigate", "enter", "submit", "tap", "search",
+    "find button", "make", "reveal", "load",
+}
+
+
+def _looks_like_action_level_goal(refined_goal: str | None) -> bool:
+    """Heuristic guardrail: refined_goal should be an outcome, not the next action."""
+    if not refined_goal:
+        return False
+    text = refined_goal.strip().lower()
+    if not text:
+        return False
+    text = re.sub(r"^[\s\-\d\.\)]*", "", text)
+    first_words = " ".join(text.split()[:2])
+    first_word = text.split()[0]
+    return first_word in ACTION_LEVEL_GOAL_VERBS or first_words in ACTION_LEVEL_GOAL_VERBS
+
+
 def messages_to_string(messages: list[dict]) -> str:
     prompt_text_strings = []
     for message in messages:
@@ -373,6 +393,14 @@ class SolverAgent(BaseAgent):
 
         # Extract element metadata from axtree based on the action's bid
         element_metadata = _extract_element_metadata(current_step.axtree, action)
+
+        original_goal = obs["goal_object"][0]["text"] if obs.get("goal_object") else None
+        if _looks_like_action_level_goal(refined_goal):
+            logger.warning(
+                "Rejected action-level refined_goal; keeping prior task objective. "
+                f"Rejected value: {refined_goal[:200]}"
+            )
+            refined_goal = self._refined_goal or original_goal
 
         # Update refined_goal tracking
         if refined_goal:
