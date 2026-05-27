@@ -7,10 +7,12 @@ actually accomplished, not just what was initially proposed.
 """
 
 from ..explore.core.trajectory import Trajectory
+from dataclasses import dataclass
 from PIL import Image
 from openai import OpenAI
 import base64
 import io
+import json
 import logging
 import os
 import re
@@ -34,6 +36,22 @@ def _pil_to_b64(image: Image.Image) -> str:
         return base64.b64encode(buffer.getvalue()).decode()
 
 
+@dataclass
+class TaskSummary:
+    """Structured post-hoc description of what a trajectory accomplished."""
+
+    accomplished_goal: str
+    completion_evidence: str | None = None
+    summary_differs_from_original: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "accomplished_goal": self.accomplished_goal,
+            "completion_evidence": self.completion_evidence,
+            "summary_differs_from_original": self.summary_differs_from_original,
+        }
+
+
 class TaskSummarizationAgent:
     """Produces a summarized task description from a completed trajectory.
 
@@ -42,18 +60,26 @@ class TaskSummarizationAgent:
     format: "<action verb> <specific details> on <website>".
     """
 
-    SYSTEM_PROMPT = """Given a list of actions performed on a website and the corresponding screenshots, your task is to come up with a single task description that is accomplished by performing these actions in the given sequence on the website.
+    SYSTEM_PROMPT = """Given a list of actions performed on a website and the corresponding screenshots, your task is to infer the user task that was actually accomplished by performing these actions in the given sequence on the website.
 
 *IMPORTANT*
-0. The task must contain an action verb: "Buy, Book, Find, Check, Choose, show me, search, browse, get, compare, view, give me, add to cart, ...", ideally involving transactions or finding information on a specific product or service.
-1. You should propose a task that is clear and specific.
-2. The task description should provide all the necessary information to complete the task.
-3. The task description must indicate the domain of the website at the end with format: "... on <website_name>", for instance, "Purchase a laptop on Amazon", "Book a hair appointment on Yelp", etc.
-4. The task should be feasible to complete by a real user and should not require any additional information not specified.
-5. The task description should specify constraints like given budget, product features, and other specifications that can narrow down the search.
-6. Do NOT use any quotation marks (either single or double) in the task description.
+0. Infer the accomplished task from the action history and screenshots first. The original task proposal is only a weak hint for resolving ambiguity.
+1. Do not copy the original task proposal unless the action history and screenshots support exactly that task.
+2. The task must contain an action verb: "Buy, Book, Find, Check, Choose, show me, search, browse, get, compare, view, give me, add to cart, ...", ideally involving transactions or finding information on a specific product or service.
+3. You should propose a task that is clear and specific.
+4. The task description should provide all the necessary information to complete the task.
+5. The task description must indicate the domain of the website at the end with format: "... on <website_name>", for instance, "Purchase a laptop on Amazon", "Book a hair appointment on Yelp", etc.
+6. The task should be feasible to complete by a real user and should not require any additional information not specified.
+7. The task description should specify constraints like given budget, product features, and other specifications that can narrow down the search.
+8. The task description should describe what was accomplished, not how it was accomplished. Do not mention procedural details like clicking, waiting, scrolling, or opening a menu unless that is the user's actual task.
+9. Do NOT use any quotation marks (either single or double) in the task description.
 
-*OUTPUT FORMAT*: First give a short analysis of the actions and screenshots, then put the final task description within ``` ```, for example: "In summary, the answer is: ```<TASK_DESCRIPTION>```".
+*OUTPUT FORMAT*: Return only a JSON object within ``` ``` with these keys:
+{
+  "accomplished_goal": "<TASK_DESCRIPTION>",
+  "completion_evidence": "<short evidence from the action history or final state>",
+  "summary_differs_from_original": <true or false>
+}
 """
 
     def __init__(self, model_name: str = "gpt-4o-2024-05-13"):
@@ -73,6 +99,11 @@ class TaskSummarizationAgent:
         Returns:
             Summarized task description string, or None if summarization fails.
         """
+        summary = self.summarize_details(trajectory, max_screenshots=max_screenshots)
+        return summary.accomplished_goal if summary else None
+
+    def summarize_details(self, trajectory: Trajectory, max_screenshots: int = 8) -> TaskSummary | None:
+        """Return a structured summary for a completed trajectory."""
         try:
             # Build action list from trajectory steps, preferring NL descriptions
             action_list = self._build_action_list(trajectory)
@@ -82,7 +113,11 @@ class TaskSummarizationAgent:
 
             if not action_list:
                 logger.warning("No actions to summarize, using original goal")
-                return trajectory.goal
+                return TaskSummary(
+                    accomplished_goal=trajectory.goal,
+                    completion_evidence="No actions were available; fell back to the original task proposal.",
+                    summary_differs_from_original=False,
+                )
 
             messages = self._build_messages(action_list, screenshots, trajectory.goal)
 
@@ -96,25 +131,66 @@ class TaskSummarizationAgent:
             raw_response = response.choices[0].message.content
             logger.info(f"Summarization response: {raw_response[:500]}")
 
-            # Extract task description from ``` markers
-            match = re.search(r"```(.*?)```", raw_response, re.DOTALL)
-            if match:
-                summary = match.group(1).strip()
-                logger.info(f"Summarized goal: {summary}")
-                return summary
+            parsed = self._parse_summary_response(raw_response, trajectory.goal)
+            if parsed:
+                logger.info(f"Accomplished goal: {parsed.accomplished_goal}")
+                return parsed
 
             # Fallback: take the last non-empty line
             lines = [l.strip() for l in raw_response.split("\n") if l.strip()]
             if lines:
                 fallback = lines[-1]
                 logger.info(f"Fallback summary: {fallback}")
-                return fallback
+                return TaskSummary(
+                    accomplished_goal=fallback,
+                    completion_evidence="Fallback summary parsed from the model response.",
+                    summary_differs_from_original=fallback != trajectory.goal,
+                )
 
-            return trajectory.goal
+            return TaskSummary(
+                accomplished_goal=trajectory.goal,
+                completion_evidence="Empty summarizer response; fell back to the original task proposal.",
+                summary_differs_from_original=False,
+            )
 
         except Exception as e:
             logger.error(f"Task summarization failed: {e}")
             return None
+
+    def _parse_summary_response(self, raw_response: str, original_goal: str) -> TaskSummary | None:
+        """Parse structured summary JSON, with backward-compatible fenced text fallback."""
+        if not raw_response:
+            return None
+
+        match = re.search(r"```(?:json)?\s*(.*?)```", raw_response, re.DOTALL | re.IGNORECASE)
+        candidate = match.group(1).strip() if match else raw_response.strip()
+
+        try:
+            parsed = json.loads(candidate)
+            accomplished_goal = str(parsed.get("accomplished_goal") or parsed.get("summarized_goal") or "").strip()
+            if not accomplished_goal:
+                return None
+            completion_evidence = parsed.get("completion_evidence")
+            differs = parsed.get("summary_differs_from_original")
+            if differs is None:
+                differs = accomplished_goal != original_goal
+            return TaskSummary(
+                accomplished_goal=accomplished_goal,
+                completion_evidence=str(completion_evidence).strip() if completion_evidence else None,
+                summary_differs_from_original=bool(differs),
+            )
+        except json.JSONDecodeError:
+            pass
+
+        if match:
+            text_summary = candidate.strip()
+            if text_summary:
+                return TaskSummary(
+                    accomplished_goal=text_summary,
+                    completion_evidence="Legacy fenced text summary parsed from the model response.",
+                    summary_differs_from_original=text_summary != original_goal,
+                )
+        return None
 
     def _build_action_list(self, trajectory: Trajectory) -> list[str]:
         """Build a list of human-readable action descriptions."""

@@ -18,7 +18,14 @@ class SolverPromptBuilder(BasePromptBuilder):
             messages.append({"text": obs["message"]})
         return messages
 
-    def format_thought_and_action(self, thought: str, action: str, action_nl: str | None = None, refined_goal: str | None = None) -> str:
+    def format_thought_and_action(
+        self,
+        thought: str,
+        action: str,
+        action_nl: str | None = None,
+        refined_goal: str | None = None,
+        task_state: dict | None = None,
+    ) -> str:
         d = {}
         if thought:
             d['thought'] = thought
@@ -28,6 +35,8 @@ class SolverPromptBuilder(BasePromptBuilder):
             d['action_in_natural_language'] = action_nl
         if refined_goal:
             d['refined_goal'] = refined_goal
+        if task_state:
+            d['task_state'] = task_state
         return json.dumps(d)
 
     def trim_axtree(self, axtree: str, num_chars_overflow: int) -> str:
@@ -55,6 +64,7 @@ class SolverPromptBuilder(BasePromptBuilder):
         completion_action = current_step.misc['parsed_action'] if current_step.misc and 'parsed_action' in current_step.misc else current_step.action
         completion_action_nl = current_step.misc.get('action_nl') if current_step.misc else None
         completion_refined_goal = current_step.misc.get('refined_goal') if current_step.misc else None
+        completion_task_state = current_step.misc.get('task_state') if current_step.misc else None
 
         add_completion = completion_thought or completion_action
 
@@ -63,6 +73,7 @@ class SolverPromptBuilder(BasePromptBuilder):
             past_refined_goals=past_refined_goals,
             completion_action_nl=completion_action_nl,
             completion_refined_goal=completion_refined_goal,
+            completion_task_state=completion_task_state,
             use_som=use_som,
         )
 
@@ -83,6 +94,7 @@ class SolverPromptBuilder(BasePromptBuilder):
                 past_refined_goals=past_refined_goals,
                 completion_action_nl=completion_action_nl,
                 completion_refined_goal=completion_refined_goal,
+                completion_task_state=completion_task_state,
                 use_som=use_som,
             )
 
@@ -97,6 +109,7 @@ class SolverPromptBuilder(BasePromptBuilder):
                     past_refined_goals=past_refined_goals,
                     completion_action_nl=completion_action_nl,
                     completion_refined_goal=completion_refined_goal,
+                    completion_task_state=completion_task_state,
                     use_som=use_som,
                 )
 
@@ -130,6 +143,7 @@ class SolverPromptBuilder(BasePromptBuilder):
         past_refined_goals: list[str | None] | None = None,
         completion_action_nl: str | None = None,
         completion_refined_goal: str | None = None,
+        completion_task_state: dict | None = None,
         use_som: bool = False,
     ):
         if past_errors is None:
@@ -179,7 +193,7 @@ class SolverPromptBuilder(BasePromptBuilder):
         if completion_thought or completion_action:
             assistant_messages = {
                 "role": "assistant",
-                "content": [self.completion_message(completion_thought, completion_action, completion_action_nl, completion_refined_goal)]
+                "content": [self.completion_message(completion_thought, completion_action, completion_action_nl, completion_refined_goal, completion_task_state)]
             }
             output["completion"] = [assistant_messages]
 
@@ -463,7 +477,16 @@ class SolverPromptBuilder(BasePromptBuilder):
                       "thought": "<your step-by-step reasoning about what to do next>",
                       "action": "<the single action to execute>",
                       "action_in_natural_language": "<describe this action in plain English, as if telling a human what you are doing>",
-                      "refined_goal": "<updated task description incorporating new details learned from the current page>"
+                      "refined_goal": "<updated task description incorporating new details learned from the current page>",
+                      "task_state": {
+                        "original_goal": "<immutable original goal>",
+                        "current_objective": "<task-level desired state aligned with original_goal>",
+                        "confirmed_entities": ["<confirmed products, pages, accounts, or records>"],
+                        "constraints": ["<confirmed constraints such as quantity, color, date, budget>"],
+                        "negative_observations": ["<failed attempts or unavailable options>"],
+                        "completion_condition": "<observable condition that means the task is done>",
+                        "infeasibility_reason": null
+                      }
                     }
                     - Do NOT output any text, explanation, or markdown outside the JSON.
                     - The "thought" key contains all your reasoning.
@@ -471,6 +494,7 @@ class SolverPromptBuilder(BasePromptBuilder):
                     - The "action_in_natural_language" key should describe the action in human-readable form (e.g., "Click on the 'Add to Cart' button for the Sony headphones").
                     - The "refined_goal" key must describe the desired task state or outcome, not the browser action. Good: "Cart contains product X with quantity 1". Bad: "Click Add to Cart", "Scroll down", "Type in the search box".
                     - The "refined_goal" key must stay aligned with the immutable original goal. Use it for learned constraints/details (e.g., budget, product name, dates, stock status). If the task has not changed, repeat the current task-level goal.
+                    - The "task_state" key must preserve original_goal exactly and update only facts learned from the page or action history. Do not put next-action instructions in current_objective.
                     - After each action, verify whether the desired state was achieved. If an item/page is confirmed unavailable after reasonable alternatives, set refined_goal to a task-level infeasibility objective and use report_infeasible("reason").
                     """
                 )
@@ -572,10 +596,17 @@ class SolverPromptBuilder(BasePromptBuilder):
         return {"type": "text", "text": base_text}
 
 
-    def completion_message(self, completion_thought: str, completion_action: str, completion_action_nl: str | None = None, completion_refined_goal: str | None = None):
+    def completion_message(
+        self,
+        completion_thought: str,
+        completion_action: str,
+        completion_action_nl: str | None = None,
+        completion_refined_goal: str | None = None,
+        completion_task_state: dict | None = None,
+    ):
         return  {
                 "type": "text",
-                "text": f"{self.format_thought_and_action(completion_thought, completion_action, completion_action_nl, completion_refined_goal)}"
+                "text": f"{self.format_thought_and_action(completion_thought, completion_action, completion_action_nl, completion_refined_goal, completion_task_state)}"
         }
 
 

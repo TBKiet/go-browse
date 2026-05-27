@@ -43,12 +43,14 @@ frontier_theta: 0.0
 Khi exploration chạy, log sẽ hiển thị dòng như thế này:
 
 ```
-Frontier scoring: selected 'https://...' with score=1.5234 (U=0.8712, V=0.4311, D=0.5000)
+Frontier scoring: selected 'https://...' with score=1.5234 (U=0.8712, V=0.4311, V_sr=0.8000, V_sr_source=ancestor:https://..., D=0.5000)
 ```
 
 Giải thích:
 - `U=0.8712` → Uncertainty cao, node này có nhiều task với success rate phân hóa mạnh (đáng khám phá)
 - `V=0.4311` → Value trung bình, node có success rate vừa phải
+- `V_sr=0.8000` → success rate estimate được dùng trong `V`
+- `V_sr_source=ancestor:https://...` → node mới đang kế thừa success rate từ ancestor gần nhất có dữ liệu. Giá trị có thể là `self`, `ancestor:<url>`, hoặc `prior`
 - `D=0.5000` → Diversity ở mức default (chưa có embedding)
 
 ### Cách 2: Chạy test unit
@@ -117,7 +119,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
     node_a.successful_trajs = 9
     node_a.exploration_count = 10
 
-    # Gán dữ liệu cho node_b: SR=0.5, n=0 → V=0.5/log(2)≈0.721
+    # Gán dữ liệu cho node_b: chưa có trajectory riêng.
+    # Vì parent root chưa có trajectory, node_b fallback prior SR=0.5
+    # → V=0.5/log(2)≈0.721
     node_b.success_rate = 0.5
     node_b.total_trajs = 0
 
@@ -136,6 +140,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 - [ ] **Config**: `configs/go_browse_config.yaml` đã có `frontier_alpha`, `frontier_beta`, `frontier_theta`
 - [ ] **Code**: `webexp/explore/core/scoring.py` tồn tại và import được
 - [ ] **Graph**: `webexp/explore/core/graph.py` import `FrontierScorer` và dùng `self.scorer`
-- [ ] **Node**: `webexp/explore/core/node.py` có các trường `exploration_count`, `success_rate`, `total_trajs`, `successful_trajs`, `embedding`
+- [ ] **Node**: `webexp/explore/core/node.py` có các trường `exploration_count`, `success_rate`, `total_trajs`, `successful_trajs`, `embedding`, `parent_url`
+- [ ] **Parent link**: `Graph.add_url()` gán `parent_url` và runtime `parent`; `Graph.load()` khôi phục `parent` từ `parent_url` nếu tìm thấy
 - [ ] **Recording**: `webexp/explore/algorithms/web_explore.py` gọi `node.record_trajectory_outcome()` sau mỗi trajectory
 - [ ] **Test**: `python test_scoring_manual.py` chạy không lỗi

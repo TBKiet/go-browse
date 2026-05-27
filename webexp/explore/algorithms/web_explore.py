@@ -9,6 +9,7 @@ from ..core.trajectory import Trajectory
 
 from ...agents.base_agent import AgentFactory
 from ...agents.task_summarization_agent import TaskSummarizationAgent
+from ...agents.semantic_verifier_agent import SemanticVerifierAgent
 from ...agents.captcha_detection_agent import CaptchaDetectionAgent
 from browsergym.core.env import BrowserEnv
 from browsergym.experiments.loop import EnvArgs
@@ -39,6 +40,31 @@ if not logger.handlers:
 # Track per-node file handlers so we can cleanly remove them between nodes
 _node_log_handlers: dict[str, logging.Handler] = {}
 
+
+def _graph_dir_for_resume(path: str) -> str:
+    """Return a graph directory from either an exp_dir or graph dir path."""
+    if os.path.isfile(os.path.join(path, "graph_info.json")):
+        return path
+    return os.path.join(path, "graph")
+
+
+def _has_saved_graph(exp_dir: str) -> bool:
+    return os.path.isfile(os.path.join(exp_dir, "graph", "graph_info.json"))
+
+
+def _redact_secrets(value):
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if any(secret_key in str(key).lower() for secret_key in ("api_key", "apikey", "token", "secret")):
+                redacted[key] = "<REDACTED>"
+            else:
+                redacted[key] = _redact_secrets(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_secrets(item) for item in value]
+    return value
+
 def _setup_node_logging(node: Node):
     """Add a file handler that writes all logs to a per-node file.
 
@@ -57,7 +83,7 @@ def _setup_node_logging(node: Node):
     log_path = os.path.join(node.exp_dir, "explore.log")
     os.makedirs(node.exp_dir, exist_ok=True)
 
-    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -107,6 +133,7 @@ class WebExploreConfig:
         frontier_alpha (float): Weight for Uncertainty (U) in frontier scoring.
         frontier_beta (float): Weight for Value (V) in frontier scoring.
         frontier_theta (float): Weight for Diversity (D) in frontier scoring.
+        captcha_detection_enabled (bool): Whether to run vision CAPTCHA checks before exploring nodes.
     """
     env: Dict
     evaluator: Dict
@@ -126,6 +153,7 @@ class WebExploreConfig:
     frontier_beta: float = 1.0
     frontier_theta: float = 1.0
     lookahead_model: Optional[str] = None
+    captcha_detection_enabled: bool = True
 
 
 def perform_full_reset(full_reset_url: str, num_retries: int = 3):
@@ -293,6 +321,23 @@ def sample_task_candidates_for_node(
     return node.add_tasks(tasks, task_misc=task_misc)
 
 
+def _tasks_created_by_agent(node: Node, agent_name: str) -> list[Task]:
+    tasks = []
+    for task in node.tasks.values():
+        agent_info = (task.misc or {}).get("agent_info", {})
+        if agent_info.get("name") == agent_name:
+            tasks.append(task)
+    return tasks
+
+
+def _pending_feasibility_tasks(tasks: list[Task]) -> list[Task]:
+    """Only feasibility-check tasks that have no saved outcome yet."""
+    return [
+        task for task in tasks
+        if not task.positive_trajs and not task.negative_trajs
+    ]
+
+
 def filter_to_feasible_tasks_for_node(
     tasks: List[Task],
     env: BrowserEnv,
@@ -366,7 +411,11 @@ def sample_task_solving_trajectories_for_node(
 
         logger.info(f"Sampling prefixed trajectories for node {node.url} and task {task.goal}.")
 
-        for _ in range(num_trajs_per_task):
+        existing_prefixed = sum(
+            1 for traj in [*task.positive_trajs, *task.negative_trajs]
+            if traj.misc and traj.misc.get("needs_prefix") is True
+        )
+        for _ in range(max(num_trajs_per_task - existing_prefixed, 0)):
 
             try:
                 traj = run_episode(
@@ -390,7 +439,11 @@ def sample_task_solving_trajectories_for_node(
                 logger.error(traceback.format_exc())
 
 
-        for _ in range(num_trajs_per_task):
+        existing_unprefixed = sum(
+            1 for traj in [*task.positive_trajs, *task.negative_trajs]
+            if traj.misc and traj.misc.get("needs_prefix") is False
+        )
+        for _ in range(max(num_trajs_per_task - existing_unprefixed, 0)):
 
             try:
                 traj = run_episode(
@@ -460,53 +513,89 @@ def _summarize_node_trajectories(node: Node, model_name: str):
     the full action history and screenshots of successful trajectories.
     """
     summarizer = TaskSummarizationAgent(model_name=model_name)
+    verifier = SemanticVerifierAgent(model_name=model_name)
     feasible_tasks = node.get_feasible_tasks()
 
     for task in feasible_tasks:
         for traj in task.positive_trajs:
             if traj.misc is None:
                 traj.misc = {}
-            if traj.misc.get("summarized_goal"):
-                continue  # Already summarized
-            summarized = summarizer.summarize(traj)
-            if summarized:
-                traj.misc["summarized_goal"] = summarized
+            if not traj.misc.get("semantic_summary"):
+                summary = summarizer.summarize_details(traj)
+                if summary:
+                    traj.misc["semantic_summary"] = summary.to_dict()
+                    traj.misc["summarized_goal"] = summary.accomplished_goal
+                    logger.info(f"Summarized goal for task '{task.goal[:100]}': {summary.accomplished_goal[:200]}")
+            if traj.misc.get("semantic_summary") and not traj.misc.get("semantic_verification"):
+                accomplished_goal = traj.misc["semantic_summary"].get("accomplished_goal")
+                verification = verifier.verify(traj, accomplished_goal=accomplished_goal)
+                if verification:
+                    traj.misc["semantic_verification"] = verification
+            if traj.misc.get("semantic_summary") or traj.misc.get("semantic_verification"):
                 traj.save_info()
-                logger.info(f"Summarized goal for task '{task.goal[:100]}': {summarized[:200]}")
 
         for traj in task.negative_trajs:
             if traj.misc is None:
                 traj.misc = {}
-            if traj.misc.get("summarized_goal"):
-                continue
-            summarized = summarizer.summarize(traj)
-            if summarized:
-                traj.misc["summarized_goal"] = summarized
+            if not traj.misc.get("semantic_summary"):
+                summary = summarizer.summarize_details(traj)
+                if summary:
+                    traj.misc["semantic_summary"] = summary.to_dict()
+                    traj.misc["summarized_goal"] = summary.accomplished_goal
+            if traj.misc.get("semantic_summary") and not traj.misc.get("semantic_verification"):
+                accomplished_goal = traj.misc["semantic_summary"].get("accomplished_goal")
+                verification = verifier.verify(traj, accomplished_goal=accomplished_goal)
+                if verification:
+                    traj.misc["semantic_verification"] = verification
+            if traj.misc.get("semantic_summary") or traj.misc.get("semantic_verification"):
                 traj.save_info()
 
         best_summary = _select_best_summarized_goal(task)
         if best_summary:
+            if task.misc is None:
+                task.misc = {}
+            task.misc["semantic_summary_selected"] = best_summary
             task.update_summarized_goal(best_summary)
             logger.info(f"Task-level summarized goal saved for '{task.goal[:100]}': {best_summary[:200]}")
 
 
 def _select_best_summarized_goal(task: Task) -> str | None:
-    """Prefer successful trajectory summaries, then the most common available summary."""
-    positive_summaries = [
-        traj.misc.get("summarized_goal")
-        for traj in task.positive_trajs
-        if traj.misc and traj.misc.get("summarized_goal")
-    ]
-    if positive_summaries:
-        return max(positive_summaries, key=lambda summary: (positive_summaries.count(summary), len(summary)))
+    """Prefer verified successful trajectory summaries with clear evidence."""
+    def candidate_for(traj):
+        if not traj.misc:
+            return None
+        summary = traj.misc.get("semantic_summary") or {}
+        accomplished_goal = summary.get("accomplished_goal") or traj.misc.get("summarized_goal")
+        if not accomplished_goal:
+            return None
+        verification = traj.misc.get("semantic_verification") or {}
+        verified = bool(
+            verification.get("is_aligned")
+            and verification.get("is_grounded")
+            and verification.get("is_complete")
+        )
+        evidence = bool(summary.get("completion_evidence") or verification.get("evidence"))
+        differs = accomplished_goal.strip() != task.goal.strip()
+        return {
+            "goal": accomplished_goal,
+            "verified": verified,
+            "evidence": evidence,
+            "differs": differs,
+            "success": bool(traj.success),
+            "length": len(accomplished_goal),
+        }
 
-    all_summaries = [
-        traj.misc.get("summarized_goal")
-        for traj in [*task.positive_trajs, *task.negative_trajs]
-        if traj.misc and traj.misc.get("summarized_goal")
+    candidates = [
+        candidate
+        for candidate in [candidate_for(traj) for traj in [*task.positive_trajs, *task.negative_trajs]]
+        if candidate
     ]
-    if all_summaries:
-        return max(all_summaries, key=lambda summary: (all_summaries.count(summary), len(summary)))
+    if candidates:
+        best = max(
+            candidates,
+            key=lambda c: (c["success"], c["verified"], c["evidence"], c["differs"], c["length"]),
+        )
+        return best["goal"]
     return None
 
 
@@ -526,7 +615,7 @@ def web_explore_loop():
     oc.resolve(config)
     config_dict = oc.to_container(config)
 
-    logger.info(f"WebExploreConfig:\n{config}")
+    logger.info(f"WebExploreConfig:\n{_redact_secrets(config_dict)}")
 
     os.makedirs(config.exp_dir, exist_ok=True)
 
@@ -579,10 +668,31 @@ def web_explore_loop():
     root_url = env.page.url
 
     evaluator = Evaluator(**config.evaluator)
-    captcha_detector = CaptchaDetectionAgent(model_name=config.evaluator.get("model_name", "gpt-4o-2024-05-13"))
+    captcha_detection_enabled = getattr(config, "captcha_detection_enabled", True)
+    captcha_detector = (
+        CaptchaDetectionAgent(model_name=config.evaluator.get("model_name", "gpt-4o-2024-05-13"))
+        if captcha_detection_enabled
+        else None
+    )
+    if not captcha_detection_enabled:
+        logger.info("CAPTCHA detection disabled by config.")
 
     if config.resume_from:
-        graph = Graph.load(os.path.join(config.resume_from, "graph"), load_images=False)
+        graph_dir = _graph_dir_for_resume(config.resume_from)
+        logger.info(f"Resuming exploration from configured graph: {graph_dir}")
+        graph = Graph.load(
+            graph_dir,
+            load_images=False,
+            lookahead_model=getattr(config, 'lookahead_model', None),
+        )
+    elif _has_saved_graph(config.exp_dir):
+        graph_dir = _graph_dir_for_resume(config.exp_dir)
+        logger.info(f"Found existing graph in exp_dir; auto-resuming from: {graph_dir}")
+        graph = Graph.load(
+            graph_dir,
+            load_images=False,
+            lookahead_model=getattr(config, 'lookahead_model', None),
+        )
     else:
         graph = Graph(
             root_url=root_url,
@@ -607,21 +717,28 @@ def web_explore_loop():
             _setup_node_logging(curr_node)
 
             # Phase 7: Check for CAPTCHA before exploring
-            obs = get_fresh_obs(env)
-            if "screenshot" in obs and captcha_detector.is_captcha(obs["screenshot"]):
-                logger.warning(f"CAPTCHA detected at {curr_node.url}, skipping node.")
-                graph.add_to_explored(curr_node)
-                exploration_count += 1
-                curr_node = graph.get_next_node()
-                continue
+            if captcha_detector is not None:
+                obs = get_fresh_obs(env)
+                if "screenshot" in obs and captcha_detector.is_captcha(obs["screenshot"]):
+                    logger.warning(f"CAPTCHA detected at {curr_node.url}, skipping node.")
+                    graph.add_to_explored(curr_node)
+                    exploration_count += 1
+                    curr_node = graph.get_next_node()
+                    continue
 
             if hasattr(config, 'full_reset_url') and config.full_reset_url:
                 logger.info(f"Performing full env reset with url: {config.full_reset_url}")
                 perform_full_reset(config.full_reset_url)
 
-            if not len(curr_node.tasks):
-                
-                page_explorer_tasks = []
+            page_explorer_tasks = _tasks_created_by_agent(curr_node, "PageExplorerAgent")
+            nav_explorer_tasks = _tasks_created_by_agent(curr_node, "NavExplorerAgent")
+            if curr_node.tasks and not page_explorer_tasks and not nav_explorer_tasks:
+                logger.info(
+                    "Loaded tasks without explorer source metadata; reusing them as page explorer tasks."
+                )
+                page_explorer_tasks = list(curr_node.tasks.values())
+
+            if not page_explorer_tasks:
                 for i, page_explorer in enumerate(page_explorers):
                     page_explorer_tasks.extend(sample_task_candidates_for_node(
                         env=env,
@@ -633,7 +750,7 @@ def web_explore_loop():
                         max_retries=config.page_explorers[i].retries,
                     ))
 
-                nav_explorer_tasks = []
+            if not nav_explorer_tasks:
                 for i, nav_explorer in enumerate(nav_explorers):
                     nav_explorer_tasks.extend(sample_task_candidates_for_node(
                         env=env,
@@ -645,6 +762,8 @@ def web_explore_loop():
                         max_retries=config.nav_explorers[i].retries,
                     ))
 
+            page_explorer_tasks = _pending_feasibility_tasks(page_explorer_tasks)
+            nav_explorer_tasks = _pending_feasibility_tasks(nav_explorer_tasks)
 
             for i, feasibility_checker in enumerate(feasibility_checkers):
                 filter_to_feasible_tasks_for_node(

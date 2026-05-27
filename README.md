@@ -62,6 +62,11 @@ For each domain (website) that you want to run data generation for, duplicate/mo
 python -m webexp.explore.algorithms.web_explore -c configs/go_browse_config.yaml
 ```
 
+If a run is interrupted, rerun the same command. When `resume_from` is `null`
+and `<exp_dir>/graph/graph_info.json` exists, exploration automatically resumes
+from the saved graph instead of starting over. Set `resume_from` only when you
+want to resume from a different run directory.
+
 ### Process Collected Go-Browse Dataset for Training
 First, set the input and output paths as appropriate in `projects/go-browse/data/generate_dataset.py` and `projects/go-browse/data/process_dataset.py`
 

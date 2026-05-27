@@ -2,6 +2,7 @@ from browsergym.core.registration import register_task
 from browsergym.webarena import config, task
 
 import browsergym.webarena
+import os
 
 class ExplorationTaskWrapper(task.GenericWebArenaTask):
     def setup(self, page):

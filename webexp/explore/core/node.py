@@ -1,7 +1,7 @@
 from .task import Task
 from .trace import Trace
 from .trajectory import TrajectoryStep, Trajectory
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 import os
@@ -49,6 +49,8 @@ class Node:
     frontier_score: float = 0.0      # Last computed composite frontier score S
     frontier_breakdown: dict = None  # Last computed breakdown {U, V, D, alpha, beta, theta}
     lookahead_candidates: list = None  # Zero-shot predictions: [{"action": str, "confidence": float}, ...]
+    parent_url: str = None           # Parent URL used to inherit cold-start SR estimates
+    parent: "Node" = field(default=None, repr=False, compare=False)  # Runtime parent reference, not serialized
    
     
     def __post_init__(self):
@@ -68,6 +70,7 @@ class Node:
                 "frontier_score": self.frontier_score,
                 "frontier_breakdown": self.frontier_breakdown,
                 "lookahead_candidates": self.lookahead_candidates,
+                "parent_url": self.parent_url,
             }
             with open(os.path.join(self.exp_dir, "node_info.json"), "w") as f:
                 json.dump(node_info, f, indent=4)
@@ -95,18 +98,17 @@ class Node:
         tasks = {}
         exploration_tasks = {}
         
-        if visited:
-            if os.path.exists(os.path.join(load_dir, "tasks")):
-                for i in range(len(os.listdir(os.path.join(load_dir, "tasks")))):
-                    task_load_dir = os.path.join(load_dir, "tasks", f"task_{i}")
-                    task = Task.load(task_load_dir, load_steps=load_steps, load_images=load_images)
-                    tasks[task.goal] = task
-            
-            if os.path.exists(os.path.join(load_dir, "exploration_tasks")):
-                for i in range(len(os.listdir(os.path.join(load_dir, "exploration_tasks")))):
-                    task_load_dir = os.path.join(load_dir, "exploration_tasks", f"task_{i}")
-                    task = Task.load(task_load_dir, load_steps=load_steps, load_images=load_images)
-                    exploration_tasks[task.goal] = task
+        if os.path.exists(os.path.join(load_dir, "tasks")):
+            for i in range(len(os.listdir(os.path.join(load_dir, "tasks")))):
+                task_load_dir = os.path.join(load_dir, "tasks", f"task_{i}")
+                task = Task.load(task_load_dir, load_steps=load_steps, load_images=load_images)
+                tasks[task.goal] = task
+        
+        if os.path.exists(os.path.join(load_dir, "exploration_tasks")):
+            for i in range(len(os.listdir(os.path.join(load_dir, "exploration_tasks")))):
+                task_load_dir = os.path.join(load_dir, "exploration_tasks", f"task_{i}")
+                task = Task.load(task_load_dir, load_steps=load_steps, load_images=load_images)
+                exploration_tasks[task.goal] = task
             
         prefixes = []
         if load_prefix:
@@ -142,6 +144,7 @@ class Node:
             frontier_score=node_info.get("frontier_score", 0.0),
             frontier_breakdown=node_info.get("frontier_breakdown", None),
             lookahead_candidates=node_info.get("lookahead_candidates", None),
+            parent_url=node_info.get("parent_url", None),
         )
         
     def update_save(self, save_prefix=False, save_info=True):
@@ -159,6 +162,7 @@ class Node:
                 "frontier_score": self.frontier_score,
                 "frontier_breakdown": self.frontier_breakdown,
                 "lookahead_candidates": self.lookahead_candidates,
+                "parent_url": self.parent_url,
             }
             with open(os.path.join(self.exp_dir, "node_info.json"), "w") as f:
                 json.dump(node_info, f, indent=4)

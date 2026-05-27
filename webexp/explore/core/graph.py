@@ -72,7 +72,13 @@ class Graph:
             return self.nodes[url]
         
         node_exp_dir = os.path.join(self.exp_dir, f"node_{len(self.nodes)}")
-        node = Node(url, {}, {}, [], "", prefixes, False, node_exp_dir, misc=node_misc)
+        parent_url = parent.url if parent else None
+        node = Node(
+            url, {}, {}, [], "", prefixes, False, node_exp_dir,
+            misc=node_misc,
+            parent_url=parent_url,
+            parent=parent,
+        )
         if parent:
             parent.children.append(node.url)
             parent.update_save(save_prefix=False)
@@ -129,8 +135,10 @@ class Graph:
             logger.warning(f"Lookahead failed for '{node.url[:80]}': {e}")
     
     def add_to_explored(self, node: Node):
-        self.explored_nodes.append(node)
-        self.unexplored_nodes.remove(node)
+        if node not in self.explored_nodes:
+            self.explored_nodes.append(node)
+        if node in self.unexplored_nodes:
+            self.unexplored_nodes.remove(node)
         node.visited = True
         node.update_save(save_prefix=False)
         logger.info(f"Node {node.url} has been explored.")
@@ -151,7 +159,9 @@ class Graph:
         breakdown = self.scorer.breakdown(best_node)
         logger.info(
             f"Frontier scoring: selected '{best_node.url[:80]}' with score={best_score:.4f} "
-            f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, D={breakdown['D']:.4f})"
+            f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, "
+            f"V_sr={breakdown['V_sr']:.4f}, V_sr_source={breakdown['V_sr_source']}, "
+            f"D={breakdown['D']:.4f})"
         )
 
         # Save frontier score/breakdown on the selected node
@@ -175,9 +185,12 @@ class Graph:
             )
             snapshot.append({
                 "url": node.url[:120],
+                "parent_url": getattr(node, "parent_url", None),
                 "score": round(score, 6),
                 "U": round(bd["U"], 6),
                 "V": round(bd["V"], 6),
+                "V_sr": round(bd["V_sr"], 6),
+                "V_sr_source": bd["V_sr_source"],
                 "D": round(bd["D"], 6),
                 "exploration_count": node.exploration_count,
                 "success_rate": node.success_rate,
@@ -202,21 +215,32 @@ class Graph:
 
 
     @staticmethod
-    def load(path: str, load_steps: bool=True, load_prefixes: bool=True, load_images: bool=True, max_nodes=-1) -> Graph:
+    def load(
+        path: str,
+        load_steps: bool=True,
+        load_prefixes: bool=True,
+        load_images: bool=True,
+        max_nodes=-1,
+        lookahead_model: Optional[str] = None,
+    ) -> Graph:
         nodes = {}
         explored_nodes = []
         unexplored_nodes = []
 
         logger.info(f"Loading graph from {path}")
-        
-        if max_nodes == -1:
-            max_nodes = len(os.listdir(path)) - 1
-        else:
-            max_nodes = min(max_nodes, len(os.listdir(path)) - 1)
-            
-        for i in range(max_nodes):
-            logger.info(f"Loading node {i} from {path}")
-            node_load_dir = os.path.join(path, f"node_{i}")
+
+        node_dirs = []
+        for name in os.listdir(path):
+            match = re.fullmatch(r"node_(\d+)", name)
+            if match and os.path.isdir(os.path.join(path, name)):
+                node_dirs.append((int(match.group(1)), name))
+        node_dirs.sort(key=lambda item: item[0])
+        if max_nodes != -1:
+            node_dirs = node_dirs[:max_nodes]
+
+        for node_index, node_dir_name in node_dirs:
+            logger.info(f"Loading node {node_index} from {path}")
+            node_load_dir = os.path.join(path, node_dir_name)
             node = Node.load(node_load_dir, load_steps=load_steps, load_prefix=load_prefixes, load_images=load_images)
             nodes[node.url] = node
             if node.visited:
@@ -243,6 +267,10 @@ class Graph:
         graph.explored_nodes = explored_nodes
         graph.unexplored_nodes = unexplored_nodes
         graph.exp_dir = path
+        graph._lookahead_model = lookahead_model
+        for node in graph.nodes.values():
+            parent_url = getattr(node, "parent_url", None)
+            node.parent = graph.nodes.get(parent_url) if parent_url else None
 
         logger.info(f"Loaded graph with {len(nodes)} nodes, {len(explored_nodes)} explored nodes, and {len(unexplored_nodes)} unexplored nodes.")
         

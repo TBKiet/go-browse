@@ -164,6 +164,7 @@ class FrontierScorer:
     def breakdown(self, node: Node) -> dict:
         """Return a dict with the score and its components (for logging/debugging)."""
         U = self.uncertainty(node)
+        V_sr, V_sr_source = self._estimate_success_rate_with_source(node)
         V = self.value(node)
         D = self.diversity(node)
         S = self.alpha * U + self.beta * V + self.theta * D
@@ -171,6 +172,8 @@ class FrontierScorer:
             "score": S,
             "U": U,
             "V": V,
+            "V_sr": V_sr,
+            "V_sr_source": V_sr_source,
             "D": D,
             "alpha": self.alpha,
             "beta": self.beta,
@@ -230,10 +233,35 @@ class FrontierScorer:
         n:  exploration count (how many times visited/sampled).
         The log penalty reduces value for over-exploited nodes.
         """
-        sr = node.success_rate if node.total_trajs > 0 else 0.5
+        sr, _ = self._estimate_success_rate_with_source(node)
         n = max(node.exploration_count, 0)
         penalty = 1.0 / math.log(n + 2)
         return sr * penalty
+
+    def _estimate_success_rate_with_source(self, node: Node) -> tuple[float, str]:
+        """Estimate SR and report its source for value scoring.
+
+        Own observed data wins. Cold-start nodes inherit the nearest runtime
+        parent/ancestor success_rate with trajectories. If no observed ancestor
+        is available, use the neutral prior 0.5.
+        """
+        if getattr(node, "total_trajs", 0) > 0:
+            return node.success_rate, "self"
+
+        seen_urls = {getattr(node, "url", None)}
+        ancestor = getattr(node, "parent", None)
+        while ancestor is not None:
+            ancestor_url = getattr(ancestor, "url", None)
+            if ancestor_url in seen_urls:
+                break
+            seen_urls.add(ancestor_url)
+
+            if getattr(ancestor, "total_trajs", 0) > 0:
+                return ancestor.success_rate, f"ancestor:{ancestor_url}"
+
+            ancestor = getattr(ancestor, "parent", None)
+
+        return 0.5, "prior"
 
     # ------------------------------------------------------------------
     # Component: Diversity  D = mean cosine distance between embeddings

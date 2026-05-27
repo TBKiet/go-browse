@@ -20,8 +20,10 @@ env_args:
 evaluator:
   model_name: gpt-4o-2024-05-13
 
-max_nodes: 10
-resume_from: null # If resuming from a previous, incomplete run, you can specify the specific run directory path here (exp_dir).
+captcha_detection_enabled: false
+
+max_nodes: 2
+resume_from: null # Optional explicit previous run path. If null and exp_dir/graph exists, exploration auto-resumes from exp_dir.
 max_feasible_page_explorer_tasks_per_node: 20
 max_feasible_nav_explorer_tasks_per_node: 10
 
@@ -46,6 +48,7 @@ page_explorers:
       base_url: ${oc.env:OPENAI_BASE_URL}
       api_key: ${oc.env:OPENAI_API_KEY}
       temperature: 0.7
+      use_som: true
     max_steps: 20
     retries: 3
 
@@ -65,6 +68,7 @@ nav_explorers:
       base_url: ${oc.env:DEEPSEEK_BASE_URL}
       api_key: ${oc.env:DEEPSEEK_API_KEY}
       temperature: 0.7
+      use_som: true
     max_steps: 15
     retries: 3
 
@@ -76,6 +80,7 @@ feasibility_checkers:
         api_key: ${oc.env:DEEPSEEK_API_KEY}
         temperature: 0.7
         char_limit: 80000
+        use_som: true
     max_steps: 10
     retries: 3
 
@@ -87,6 +92,7 @@ solvers:
         api_key: ${oc.env:OPENAI_API_KEY}
         temperature: 0.7
         char_limit: 80000
+        use_som: true
     max_steps: 10
     retries: 2
 

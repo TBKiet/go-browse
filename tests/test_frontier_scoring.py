@@ -28,15 +28,18 @@ def _make_task(goal: str, n_positive: int, n_negative: int) -> Task:
 
 
 def _make_node(
+    url: str = "http://test.com",
     exploration_tasks: dict = None,
     total_trajs: int = 0,
     successful_trajs: int = 0,
     success_rate: float = 0.0,
     exploration_count: int = 0,
     embedding: list = None,
+    parent_url: str = None,
+    parent: Node = None,
 ) -> Node:
     return Node(
-        url="http://test.com",
+        url=url,
         tasks={},
         exploration_tasks=exploration_tasks or {},
         children=[],
@@ -50,6 +53,8 @@ def _make_node(
         total_trajs=total_trajs,
         successful_trajs=successful_trajs,
         embedding=embedding,
+        parent_url=parent_url,
+        parent=parent,
     )
 
 
@@ -124,6 +129,57 @@ class TestValue:
         assert scorer.value(node_low) > scorer.value(node_high)
 
 
+    def test_fresh_node_inherits_nearest_parent_success_rate(self):
+        scorer = FrontierScorer()
+        parent = _make_node(
+            url="http://parent.com",
+            total_trajs=10,
+            successful_trajs=8,
+            success_rate=0.8,
+        )
+        child = _make_node(
+            url="http://child.com",
+            parent_url=parent.url,
+            parent=parent,
+        )
+
+        expected = 0.8 / math.log(2)
+        assert abs(scorer.value(child) - expected) < 0.01
+        sr, source = scorer._estimate_success_rate_with_source(child)
+        assert sr == 0.8
+        assert source == "ancestor:http://parent.com"
+
+    def test_fresh_node_inherits_nearest_observed_ancestor(self):
+        scorer = FrontierScorer()
+        grandparent = _make_node(
+            url="http://grandparent.com",
+            total_trajs=5,
+            successful_trajs=3,
+            success_rate=0.6,
+        )
+        parent = _make_node(
+            url="http://parent.com",
+            parent_url=grandparent.url,
+            parent=grandparent,
+        )
+        child = _make_node(
+            url="http://child.com",
+            parent_url=parent.url,
+            parent=parent,
+        )
+
+        sr, source = scorer._estimate_success_rate_with_source(child)
+        assert sr == 0.6
+        assert source == "ancestor:http://grandparent.com"
+
+    def test_fresh_node_without_parent_reference_uses_prior(self):
+        scorer = FrontierScorer()
+        node = _make_node(parent_url="http://missing-parent.com")
+        sr, source = scorer._estimate_success_rate_with_source(node)
+        assert sr == 0.5
+        assert source == "prior"
+
+
 class TestDiversity:
     def test_no_embedding_returns_05(self):
         scorer = FrontierScorer()
@@ -165,7 +221,9 @@ class TestComposite:
         scorer = FrontierScorer(alpha=1.0, beta=2.0, theta=0.5)
         node = _make_node()
         b = scorer.breakdown(node)
-        assert all(k in b for k in ("score", "U", "V", "D", "alpha", "beta", "theta"))
+        assert all(k in b for k in (
+            "score", "U", "V", "V_sr", "V_sr_source", "D", "alpha", "beta", "theta"
+        ))
 
     def test_breakdown_score_matches_compute(self):
         scorer = FrontierScorer(alpha=1.0, beta=2.0, theta=0.5)

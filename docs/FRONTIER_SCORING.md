@@ -160,6 +160,7 @@ Và hàm debug:
 ```python
 def breakdown(self, node: Node) -> dict:
     U = self.uncertainty(node)
+    V_sr, V_sr_source = self._estimate_success_rate_with_source(node)
     V = self.value(node)
     D = self.diversity(node)
     S = self.alpha * U + self.beta * V + self.theta * D
@@ -167,6 +168,8 @@ def breakdown(self, node: Node) -> dict:
         "score": S,
         "U": U,
         "V": V,
+        "V_sr": V_sr,
+        "V_sr_source": V_sr_source,
         "D": D,
         "alpha": self.alpha,
         "beta": self.beta,
@@ -269,11 +272,26 @@ Code hiện tại:
 
 ```python
 def value(self, node: Node) -> float:
-    sr = node.success_rate if node.total_trajs > 0 else 0.5
+    sr, _ = self._estimate_success_rate_with_source(node)
     n = max(node.exploration_count, 0)
     penalty = 1.0 / math.log(n + 2)
     return sr * penalty
 ```
+
+Success rate dùng trong `V` được lấy theo thứ tự:
+
+1. `self`: nếu chính node có `total_trajs > 0`, dùng `node.success_rate`.
+2. `ancestor:<url>`: nếu node chưa có trajectory, dùng ancestor gần nhất có `total_trajs > 0`.
+3. `prior`: nếu không có ancestor hợp lệ hoặc không tìm thấy parent, dùng prior trung lập `0.5`.
+
+Helper debug:
+
+```python
+def _estimate_success_rate_with_source(self, node: Node) -> tuple[float, str]:
+    ...
+```
+
+`breakdown()` log thêm `V_sr` và `V_sr_source` để biết `V` đang dùng success rate từ đâu.
 
 ### Ý nghĩa
 
@@ -302,15 +320,18 @@ node.total_trajs = 0
 thì code dùng:
 
 ```python
-sr = 0.5
+sr, source = self._estimate_success_rate_with_source(node)
 ```
 
-Nghĩa là `V` lúc này không phải value thật, mà là **prior trung lập**.
+Nghĩa là `V` lúc này dùng estimate cho cold-start node:
+
+- nếu parent/ancestor gần nhất có trajectory, `sr` kế thừa từ ancestor đó;
+- nếu không có parent, không tìm thấy parent, hoặc ancestor chưa có dữ liệu, `sr = 0.5`.
 
 Với `n = 0`:
 
 ```python
-V = 0.5 * (1 / math.log(2))
+V = sr * (1 / math.log(2))
 ```
 
 Vì `math.log` là log tự nhiên, nên:
@@ -320,11 +341,11 @@ Vì `math.log` là log tự nhiên, nên:
 V ≈ 0.7213
 ```
 
-Do đó, ở node mới, `V` có thể lớn hơn 0.5.
+Do đó, ở node mới, `V` có thể lớn hơn 0.5. Ví dụ fallback prior `sr=0.5` cho `V≈0.7213`; nếu kế thừa `sr=0.8` từ parent thì `V≈1.1542`.
 
 ### Điểm cần ghi nhớ
 
-`V` chỉ phản ánh success rate thật sau khi node đã có trajectory. Trước đó, nó chỉ là giá trị mặc định để node mới vẫn có điểm trong frontier.
+`V` phản ánh success rate thật của chính node sau khi node đã có trajectory. Trước đó, nó là estimate kế thừa từ parent/ancestor gần nhất có dữ liệu, hoặc prior `0.5` nếu không có dữ liệu để kế thừa.
 
 ---
 
@@ -411,7 +432,7 @@ Nếu chưa có lookahead candidates:
 
 ```text
 U = 1.0
-V = 0.5 / log(2) ≈ 0.7213
+V = inherited_or_prior_sr / log(2)
 D = 0.5
 ```
 
@@ -419,14 +440,14 @@ Nếu có lookahead candidates:
 
 ```text
 U = variance(confidence_scores) / mean(confidence_scores)
-V = 0.5 / log(2) ≈ 0.7213
+V = inherited_or_prior_sr / log(2)
 D = 0.5
 ```
 
 Nghĩa là node mới được chấm chủ yếu bằng:
 
 - độ bất định lookahead `U`, nếu có;
-- prior value `V`;
+- inherited value `V` từ parent/ancestor gần nhất có dữ liệu, hoặc prior `0.5`;
 - neutral diversity `D`.
 
 ### Node đã explore
@@ -459,6 +480,7 @@ class FrontierScorer:
     def breakdown(node) -> dict
     def uncertainty(node) -> float
     def value(node) -> float
+    def _estimate_success_rate_with_source(node) -> tuple[float, str]
     def diversity(node) -> float
     def cosine_distance(a, b) -> float
     def to_dict() -> dict
@@ -482,6 +504,8 @@ Theo logic hiện tại, node cần có các trường sau để scoring hoạt 
 | `total_trajs` | `int` | Tổng số trajectory đã chạy từ node |
 | `successful_trajs` | `int` | Số trajectory thành công |
 | `embedding` | `list[list[float]]` hoặc `None` | Danh sách embedding của các UI/DOM state |
+| `parent_url` | `str` hoặc `None` | URL cha, persist trong `node_info.json` để debug/load graph |
+| `parent` | `Node` hoặc `None` | Runtime reference tới node cha, không serialize trực tiếp |
 
 Phương thức cập nhật outcome:
 
@@ -709,12 +733,12 @@ Selected 'https://...' score=1.5234 (U=0.8712, V=0.4311, D=0.5000)
 
 - Code không phụ thuộc numpy; các phép tính dùng `math` và pure Python.
 - `U` hiện tại dùng `node.lookahead_candidates`, không dùng success rate giữa các task thật.
-- `V` dùng success rate thật nếu có trajectory, nếu không dùng prior `0.5`.
+- `V` dùng success rate thật nếu node có trajectory; node mới kế thừa success rate từ parent/ancestor gần nhất có dữ liệu; nếu không có thì dùng prior `0.5`.
 - `D` cần ít nhất 2 embedding vector, nếu không trả về `0.5`.
 - `math.log` trong code là log tự nhiên, nên `1 / log(2) > 1`.
 - `sigma` trong `uncertainty()` hiện đang là variance, dù tên biến là `sigma`.
 - `FrontierScorer.to_dict()` và `from_dict()` dùng để serialize/restore `alpha`, `beta`, `theta`, `epsilon`.
-- Nếu load graph cũ không có field mới, cần đảm bảo `Node` có default cho `lookahead_candidates`, `exploration_count`, `success_rate`, `total_trajs`, `successful_trajs`, `embedding`.
+- Nếu load graph cũ không có field mới, cần đảm bảo `Node` có default cho `lookahead_candidates`, `exploration_count`, `success_rate`, `total_trajs`, `successful_trajs`, `embedding`, `parent_url`.
 
 ---
 
@@ -722,7 +746,7 @@ Selected 'https://...' score=1.5234 (U=0.8712, V=0.4311, D=0.5000)
 
 ```text
 U = độ bất định từ lookahead confidence, dùng được cả trước khi explore thật nếu đã có axtree snippet.
-V = giá trị khai thác từ success rate trajectory, nhưng node mới dùng prior 0.5.
+V = giá trị khai thác từ success rate trajectory; node mới kế thừa SR từ parent/ancestor gần nhất, rồi mới fallback prior 0.5.
 D = độ đa dạng UI/DOM từ embedding state liên tiếp, node mới dùng default 0.5.
 S = αU + βV + θD, node có S cao nhất được chọn từ frontier.
 ```

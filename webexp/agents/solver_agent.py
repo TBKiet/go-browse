@@ -47,6 +47,75 @@ def _looks_like_action_level_goal(refined_goal: str | None) -> bool:
     return first_word in ACTION_LEVEL_GOAL_VERBS or first_words in ACTION_LEVEL_GOAL_VERBS
 
 
+def _build_task_state(original_goal: str | None, refined_goal: str | None, parsed_task_state: dict | None = None) -> dict:
+    """Create a structured task state while preserving LLM-provided fields."""
+    task_state = parsed_task_state.copy() if isinstance(parsed_task_state, dict) else {}
+    if original_goal and not task_state.get("original_goal"):
+        task_state["original_goal"] = original_goal
+    if refined_goal and not task_state.get("current_objective"):
+        task_state["current_objective"] = refined_goal
+    elif original_goal and not task_state.get("current_objective"):
+        task_state["current_objective"] = original_goal
+    task_state.setdefault("confirmed_entities", [])
+    task_state.setdefault("constraints", [])
+    task_state.setdefault("negative_observations", [])
+    task_state.setdefault("completion_condition", None)
+    task_state.setdefault("infeasibility_reason", None)
+    return task_state
+
+
+def _validate_action_grounding(action: str | None, action_nl: str | None, element_metadata: dict | None) -> dict:
+    """Heuristically check whether action_nl describes the grounded target."""
+    result = {
+        "grounding_valid": None,
+        "grounding_reason": None,
+    }
+    if not action:
+        result.update(grounding_valid=False, grounding_reason="missing_action")
+        return result
+    if not action_nl:
+        result.update(grounding_valid=False, grounding_reason="missing_action_nl")
+        return result
+
+    action_lower = action.lower()
+    action_nl_lower = action_nl.lower()
+
+    if action_lower.startswith("type("):
+        parts = re.findall(r"['\"]([^'\"]*)['\"]", action)
+        typed_text = parts[1] if len(parts) > 1 else None
+        if typed_text and typed_text.lower() in action_nl_lower:
+            result.update(grounding_valid=True, grounding_reason="typed_text_mentioned")
+        else:
+            result.update(grounding_valid=False, grounding_reason="typed_text_not_mentioned")
+        return result
+
+    if not re.search(r"\(['\"]\d+['\"]", action):
+        # Navigation/chat/noop actions do not ground to a page element.
+        result.update(grounding_valid=True, grounding_reason="non_element_action")
+        return result
+
+    text = (element_metadata or {}).get("text")
+    if not text:
+        result.update(grounding_valid=False, grounding_reason="missing_element_metadata")
+        return result
+
+    tokens = [
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9+_-]{2,}", text)
+        if token.lower() not in {"button", "link", "text", "statictext"}
+    ]
+    if not tokens:
+        result.update(grounding_valid=True, grounding_reason="element_text_has_no_useful_tokens")
+        return result
+
+    overlap = [token for token in tokens[:12] if token in action_nl_lower]
+    result.update(
+        grounding_valid=bool(overlap),
+        grounding_reason="element_text_overlap" if overlap else "action_nl_does_not_mention_element",
+    )
+    return result
+
+
 def messages_to_string(messages: list[dict]) -> str:
     prompt_text_strings = []
     for message in messages:
@@ -125,6 +194,7 @@ def _extract_full_response(raw_string: str) -> dict | None:
                         "thought": parsed.get("thought"),
                         "action_nl": parsed.get("action_in_natural_language"),
                         "refined_goal": parsed.get("refined_goal"),
+                        "task_state": parsed.get("task_state"),
                     }
             except json.JSONDecodeError:
                 pass
@@ -195,6 +265,14 @@ def _extract_element_metadata(axtree: str, action: str) -> dict | None:
         if len(text) > 200:
             text = text[:200] + "..."
         return {"bid": bid, "tag": m2.group(1), "text": text}
+    # BrowserGym often formats lines like: [42] button 'Add to Cart'
+    line_pattern3 = re.compile(rf"\[{bid}\]\s+([A-Za-z_][\w-]*)\s+['\"](.*?)['\"]")
+    m3 = line_pattern3.search(axtree)
+    if m3:
+        text = m3.group(2).strip()
+        if len(text) > 200:
+            text = text[:200] + "..."
+        return {"bid": bid, "tag": m3.group(1), "text": text}
     return {"bid": bid, "tag": None, "text": None}
 
 
@@ -354,6 +432,7 @@ class SolverAgent(BaseAgent):
 
         action_nl = None
         refined_goal = None
+        task_state = None
         element_metadata = None
         page_url_before = obs.get("open_pages_urls", [None])[0] if obs.get("open_pages_urls") else None
 
@@ -371,6 +450,7 @@ class SolverAgent(BaseAgent):
             thought = parsed_response.get("thought")
             action_nl = parsed_response.get("action_nl")
             refined_goal = parsed_response.get("refined_goal")
+            task_state = parsed_response.get("task_state")
             if action is None:
                 raise ValueError(f"Could not parse action from LLM response. Raw (first 500 chars): {raw_action[:500]}")
             current_step.misc["model_usage"] = response.usage.to_dict()
@@ -408,6 +488,9 @@ class SolverAgent(BaseAgent):
             logger.info(f"Refined goal updated: {refined_goal[:200]}")
         if action_nl:
             logger.info(f"Action (NL): {action_nl[:200]}")
+
+        task_state = _build_task_state(original_goal, refined_goal or self._refined_goal, task_state)
+        grounding_info = _validate_action_grounding(action, action_nl, element_metadata)
 
         # Detect repeated action+error loops
         last_error = obs.get("last_action_error")
@@ -460,8 +543,10 @@ class SolverAgent(BaseAgent):
             "raw_action": raw_action,
             "action_nl": action_nl,
             "refined_goal": refined_goal or self._refined_goal,
+            "task_state": task_state,
             "element_metadata": element_metadata,
             "page_url_before": page_url_before,
+            **grounding_info,
         })
 
         self.history.append(current_step)
