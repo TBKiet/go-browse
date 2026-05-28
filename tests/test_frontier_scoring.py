@@ -34,7 +34,9 @@ def _make_node(
     successful_trajs: int = 0,
     success_rate: float = 0.0,
     exploration_count: int = 0,
+    selected_child_count: int = 0,
     embedding: list = None,
+    lookahead_candidates: list = None,
     parent_url: str = None,
     parent: Node = None,
 ) -> Node:
@@ -52,7 +54,9 @@ def _make_node(
         success_rate=success_rate,
         total_trajs=total_trajs,
         successful_trajs=successful_trajs,
+        selected_child_count=selected_child_count,
         embedding=embedding,
+        lookahead_candidates=lookahead_candidates,
         parent_url=parent_url,
         parent=parent,
     )
@@ -68,55 +72,53 @@ class TestUncertainty:
     def test_one_task_one_traj(self):
         """1 task, 1 positive → SR=1.0 → mu=1.0, sigma=0 → U=0"""
         scorer = FrontierScorer()
-        node = _make_node(exploration_tasks={
-            "t1": _make_task("t1", n_positive=1, n_negative=0),
-        })
+        node = _make_node(lookahead_candidates=[{"action": "a", "confidence": 1.0}])
         assert scorer.uncertainty(node) == 0.0
 
     def test_two_tasks_split(self):
         """2 tasks: SR=1.0, SR=0.0 → mu=0.5, sigma=0.25 → U=0.5"""
         scorer = FrontierScorer()
-        node = _make_node(exploration_tasks={
-            "t1": _make_task("t1", n_positive=1, n_negative=0),
-            "t2": _make_task("t2", n_positive=0, n_negative=1),
-        })
+        node = _make_node(lookahead_candidates=[
+            {"action": "a", "confidence": 1.0},
+            {"action": "b", "confidence": 0.0},
+        ])
         assert abs(scorer.uncertainty(node) - 0.5) < 0.01
 
     def test_two_tasks_equal(self):
         """2 tasks both SR=0.5 → sigma=0 → U=0"""
         scorer = FrontierScorer()
-        node = _make_node(exploration_tasks={
-            "t1": _make_task("t1", n_positive=1, n_negative=1),
-            "t2": _make_task("t2", n_positive=1, n_negative=1),
-        })
+        node = _make_node(lookahead_candidates=[
+            {"action": "a", "confidence": 0.5},
+            {"action": "b", "confidence": 0.5},
+        ])
         assert scorer.uncertainty(node) == 0.0
 
     def test_three_tasks_high_variance(self):
         """3 tasks: SR=1.0, 0.5, 0.0 → mu=0.5, sigma=0.1667, U≈0.333"""
         scorer = FrontierScorer()
-        node = _make_node(exploration_tasks={
-            "t1": _make_task("t1", n_positive=2, n_negative=0),
-            "t2": _make_task("t2", n_positive=1, n_negative=1),
-            "t3": _make_task("t3", n_positive=0, n_negative=2),
-        })
+        node = _make_node(lookahead_candidates=[
+            {"action": "a", "confidence": 1.0},
+            {"action": "b", "confidence": 0.5},
+            {"action": "c", "confidence": 0.0},
+        ])
         U = scorer.uncertainty(node)
         assert abs(U - 0.333) < 0.01, f"Expected ~0.333, got {U}"
 
 
 class TestValue:
     def test_fresh_node(self):
-        """Node mới → SR=0.5 (default), n=0 → V = 0.5/log(2)"""
+        """Node mới → SR=0.5 (default), n clamped to 1 → V = 0.5/log(2)"""
         scorer = FrontierScorer()
         node = _make_node()
         expected = 0.5 / math.log(2)
         assert abs(scorer.value(node) - expected) < 0.01
 
     def test_with_history(self):
-        """SR=0.8, n=10 → V = 0.8/log(12)"""
+        """Root node: SR=0.8, n=10 → V = 0.8/log(11)"""
         scorer = FrontierScorer()
         node = _make_node(total_trajs=10, successful_trajs=8,
                           success_rate=0.8, exploration_count=10)
-        expected = 0.8 / math.log(12)
+        expected = 0.8 / math.log(11)
         assert abs(scorer.value(node) - expected) < 0.01
 
     def test_decay_over_time(self):
@@ -129,13 +131,14 @@ class TestValue:
         assert scorer.value(node_low) > scorer.value(node_high)
 
 
-    def test_fresh_node_inherits_nearest_parent_success_rate(self):
+    def test_fresh_node_uses_parent_success_rate(self):
         scorer = FrontierScorer()
         parent = _make_node(
             url="http://parent.com",
             total_trajs=10,
             successful_trajs=8,
             success_rate=0.8,
+            selected_child_count=3,
         )
         child = _make_node(
             url="http://child.com",
@@ -143,13 +146,13 @@ class TestValue:
             parent=parent,
         )
 
-        expected = 0.8 / math.log(2)
+        expected = 0.8 / math.log(4)
         assert abs(scorer.value(child) - expected) < 0.01
-        sr, source = scorer._estimate_success_rate_with_source(child)
+        sr, source = scorer._estimate_parent_success_rate_with_source(child)
         assert sr == 0.8
-        assert source == "ancestor:http://parent.com"
+        assert source == "parent:http://parent.com"
 
-    def test_fresh_node_inherits_nearest_observed_ancestor(self):
+    def test_fresh_node_uses_direct_parent_prior_not_observed_ancestor(self):
         scorer = FrontierScorer()
         grandparent = _make_node(
             url="http://grandparent.com",
@@ -168,16 +171,31 @@ class TestValue:
             parent=parent,
         )
 
-        sr, source = scorer._estimate_success_rate_with_source(child)
-        assert sr == 0.6
-        assert source == "ancestor:http://grandparent.com"
+        sr, source = scorer._estimate_parent_success_rate_with_source(child)
+        assert sr == 0.5
+        assert source == "parent_prior:http://parent.com"
 
     def test_fresh_node_without_parent_reference_uses_prior(self):
         scorer = FrontierScorer()
         node = _make_node(parent_url="http://missing-parent.com")
-        sr, source = scorer._estimate_success_rate_with_source(node)
+        sr, source = scorer._estimate_parent_success_rate_with_source(node)
         assert sr == 0.5
         assert source == "prior"
+
+    def test_sibling_urls_share_same_value(self):
+        scorer = FrontierScorer()
+        parent = _make_node(
+            url="http://parent.com",
+            total_trajs=10,
+            successful_trajs=7,
+            success_rate=0.7,
+            selected_child_count=2,
+        )
+        child_a = _make_node(url="http://a.com", parent_url=parent.url, parent=parent)
+        child_b = _make_node(url="http://b.com", parent_url=parent.url, parent=parent)
+
+        assert scorer.value(child_a) == scorer.value(child_b)
+        assert abs(scorer.value(child_a) - (0.7 / math.log(3))) < 0.01
 
 
 class TestDiversity:
@@ -222,7 +240,8 @@ class TestComposite:
         node = _make_node()
         b = scorer.breakdown(node)
         assert all(k in b for k in (
-            "score", "U", "V", "V_sr", "V_sr_source", "D", "alpha", "beta", "theta"
+            "score", "U", "V", "V_sr", "V_sr_source", "V_n", "V_n_source",
+            "D", "alpha", "beta", "theta"
         ))
 
     def test_breakdown_score_matches_compute(self):

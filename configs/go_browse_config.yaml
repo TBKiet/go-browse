@@ -28,8 +28,8 @@ max_feasible_page_explorer_tasks_per_node: 20
 max_feasible_nav_explorer_tasks_per_node: 10
 
 # Frontier scoring: S = α·U + β·V + θ·D
-# α (alpha): weight for Uncertainty — prefers nodes with high variance in task scores
-# β (beta):   weight for Value (exploitation) — prefers nodes with high success rate, decays with visits
+# α (alpha): weight for Uncertainty — prefers nodes with high variance in lookahead confidence
+# β (beta):   weight for Value (exploitation) — prefers children of high-SR parents, decays as more siblings are selected
 # θ (theta):  weight for Diversity — prefers nodes with high UI/DOM state change
 frontier_alpha: 1.5
 frontier_beta: 1.0

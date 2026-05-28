@@ -130,9 +130,9 @@ class WebExploreConfig:
         max_feasible_nav_explorer_tasks_per_node (int): Maximum feasible tasks per node for navigation explorers.
         exp_dir (str): Directory for saving exploration data.
         full_reset_url (Optional[str]): URL for full reset.
-        frontier_alpha (float): Weight for Uncertainty (U) in frontier scoring.
-        frontier_beta (float): Weight for Value (V) in frontier scoring.
-        frontier_theta (float): Weight for Diversity (D) in frontier scoring.
+        frontier_alpha (float): Frontier scoring addition; weight for Uncertainty (U).
+        frontier_beta (float): Frontier scoring addition; weight for Value (V).
+        frontier_theta (float): Frontier scoring addition; weight for Diversity (D).
         captcha_detection_enabled (bool): Whether to run vision CAPTCHA checks before exploring nodes.
     """
     env: Dict
@@ -149,6 +149,7 @@ class WebExploreConfig:
     max_feasible_page_explorer_tasks_per_node: int
     max_feasible_nav_explorer_tasks_per_node: int
     full_reset_url: Optional[str]
+    # Frontier scoring addition: Graph uses these weights when ranking the frontier.
     frontier_alpha: float = 1.0
     frontier_beta: float = 1.0
     frontier_theta: float = 1.0
@@ -375,6 +376,7 @@ def filter_to_feasible_tasks_for_node(
 
                 trajs.append(traj)
 
+                # Frontier scoring addition: update node SR for future child V.
                 node.record_trajectory_outcome(traj.success)
 
                 if traj.success:
@@ -432,6 +434,7 @@ def sample_task_solving_trajectories_for_node(
                 traj.misc["needs_prefix"] = True
 
                 node.add_trajectory(traj)
+                # Frontier scoring addition: update node SR for future child V.
                 node.record_trajectory_outcome(traj.success)
 
             except Exception as e:
@@ -460,6 +463,7 @@ def sample_task_solving_trajectories_for_node(
                 traj.misc["needs_prefix"] = False
 
                 node.add_trajectory(traj)
+                # Frontier scoring addition: update node SR for future child V.
                 node.record_trajectory_outcome(traj.success)
 
             except Exception as e:
@@ -683,6 +687,7 @@ def web_explore_loop():
         graph = Graph.load(
             graph_dir,
             load_images=False,
+            # Frontier scoring addition: restore lookahead behavior while scorer weights come from graph_info.
             lookahead_model=getattr(config, 'lookahead_model', None),
         )
     elif _has_saved_graph(config.exp_dir):
@@ -691,6 +696,7 @@ def web_explore_loop():
         graph = Graph.load(
             graph_dir,
             load_images=False,
+            # Frontier scoring addition: restore lookahead behavior while scorer weights come from graph_info.
             lookahead_model=getattr(config, 'lookahead_model', None),
         )
     else:
@@ -699,6 +705,7 @@ def web_explore_loop():
             exp_dir=config.exp_dir,
             denylist_patterns=config_dict['denylist_patterns'], 
             allowlist_patterns=config_dict['allowlist_patterns'],
+            # Frontier scoring addition: pass ranking weights and lookahead model.
             alpha=config.frontier_alpha,
             beta=config.frontier_beta,
             theta=config.frontier_theta,

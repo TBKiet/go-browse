@@ -5,8 +5,8 @@ Implements the composite scoring function:
     S = α·U + β·V + θ·D
 
 Where:
-    U (Uncertainty) = σ / (μ + ε)  — variance/mean of task success rates
-    V (Value)       = SR · (1 / log(n + 2))  — success rate with visit penalty
+    U (Uncertainty) = σ / (μ + ε)  — variance/mean of lookahead confidences
+    V (Value)       = SR · (1 / log(n + 1))  — parent success rate with sibling penalty
     D (Diversity)   = mean cosine distance between consecutive state embeddings
 """
 
@@ -164,7 +164,8 @@ class FrontierScorer:
     def breakdown(self, node: Node) -> dict:
         """Return a dict with the score and its components (for logging/debugging)."""
         U = self.uncertainty(node)
-        V_sr, V_sr_source = self._estimate_success_rate_with_source(node)
+        V_sr, V_sr_source = self._estimate_parent_success_rate_with_source(node)
+        V_n, V_n_source = self._parent_selected_child_count_with_source(node)
         V = self.value(node)
         D = self.diversity(node)
         S = self.alpha * U + self.beta * V + self.theta * D
@@ -174,6 +175,8 @@ class FrontierScorer:
             "V": V,
             "V_sr": V_sr,
             "V_sr_source": V_sr_source,
+            "V_n": V_n,
+            "V_n_source": V_n_source,
             "D": D,
             "alpha": self.alpha,
             "beta": self.beta,
@@ -221,47 +224,48 @@ class FrontierScorer:
         return sigma / (mu + self.epsilon)
 
     # ------------------------------------------------------------------
-    # Component: Value  V = SR · (1 / log(n + 2))
+    # Component: Value  V = SR · (1 / log(n + 1))
     # ------------------------------------------------------------------
 
     def value(self, node: Node) -> float:
-        """Value (exploitation) — higher means this node has been fruitful.
+        """Value (exploitation) — higher means the parent branch is fruitful.
 
-        V = SR · (1 / log(n + 2))
+        V = SR · (1 / log(n + 1))
 
-        SR: success rate of trajectories from this node.
-        n:  exploration count (how many times visited/sampled).
-        The log penalty reduces value for over-exploited nodes.
+        SR: success rate of the parent node.
+        n:  number of child URLs selected for exploration from that parent.
+        Sibling URLs share the same SR and n, so they share the same V.
         """
-        sr, _ = self._estimate_success_rate_with_source(node)
-        n = max(node.exploration_count, 0)
-        penalty = 1.0 / math.log(n + 2)
+        sr, _ = self._estimate_parent_success_rate_with_source(node)
+        n, _ = self._parent_selected_child_count_with_source(node)
+        n = max(n, 1)
+        penalty = 1.0 / math.log(n + 1)
         return sr * penalty
 
-    def _estimate_success_rate_with_source(self, node: Node) -> tuple[float, str]:
-        """Estimate SR and report its source for value scoring.
+    def _estimate_parent_success_rate_with_source(self, node: Node) -> tuple[float, str]:
+        """Estimate parent SR and report its source for value scoring.
 
-        Own observed data wins. Cold-start nodes inherit the nearest runtime
-        parent/ancestor success_rate with trajectories. If no observed ancestor
-        is available, use the neutral prior 0.5.
+        Child nodes use their direct parent's observed success_rate. Root nodes
+        use their own observed success_rate. If the required node has no
+        trajectories yet, use the neutral prior 0.5.
         """
+        parent = getattr(node, "parent", None)
+        if parent is not None:
+            if getattr(parent, "total_trajs", 0) > 0:
+                return parent.success_rate, f"parent:{getattr(parent, 'url', None)}"
+            return 0.5, f"parent_prior:{getattr(parent, 'url', None)}"
+
         if getattr(node, "total_trajs", 0) > 0:
             return node.success_rate, "self"
 
-        seen_urls = {getattr(node, "url", None)}
-        ancestor = getattr(node, "parent", None)
-        while ancestor is not None:
-            ancestor_url = getattr(ancestor, "url", None)
-            if ancestor_url in seen_urls:
-                break
-            seen_urls.add(ancestor_url)
-
-            if getattr(ancestor, "total_trajs", 0) > 0:
-                return ancestor.success_rate, f"ancestor:{ancestor_url}"
-
-            ancestor = getattr(ancestor, "parent", None)
-
         return 0.5, "prior"
+
+    def _parent_selected_child_count_with_source(self, node: Node) -> tuple[int, str]:
+        """Return n for V: selected child count on the direct parent."""
+        parent = getattr(node, "parent", None)
+        if parent is not None:
+            return max(getattr(parent, "selected_child_count", 0), 0), f"parent:{getattr(parent, 'url', None)}"
+        return max(getattr(node, "exploration_count", 0), 0), "self"
 
     # ------------------------------------------------------------------
     # Component: Diversity  D = mean cosine distance between embeddings

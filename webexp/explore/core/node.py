@@ -40,16 +40,17 @@ class Node:
     visited: bool
     exp_dir: str
     misc: dict = None
-    # Frontier scoring fields
-    exploration_count: int = 0       # n: number of times visited/sampled
-    success_rate: float = 0.0        # SR: success rate of trajectories from this node
+    # Frontier scoring addition: persisted statistics used by FrontierScorer.
+    exploration_count: int = 0       # Number of trajectories sampled from this node
+    success_rate: float = 0.0        # Success rate of trajectories from this node
     total_trajs: int = 0             # Total trajectories run from this node
     successful_trajs: int = 0        # Successful trajectories from this node
+    selected_child_count: int = 0     # n: number of child URLs selected for exploration
     embedding: list = None           # Cached embedding for diversity computation
     frontier_score: float = 0.0      # Last computed composite frontier score S
     frontier_breakdown: dict = None  # Last computed breakdown {U, V, D, alpha, beta, theta}
     lookahead_candidates: list = None  # Zero-shot predictions: [{"action": str, "confidence": float}, ...]
-    parent_url: str = None           # Parent URL used to inherit cold-start SR estimates
+    parent_url: str = None           # Parent URL used to restore runtime parent links
     parent: "Node" = field(default=None, repr=False, compare=False)  # Runtime parent reference, not serialized
    
     
@@ -67,6 +68,7 @@ class Node:
                 "success_rate": self.success_rate,
                 "total_trajs": self.total_trajs,
                 "successful_trajs": self.successful_trajs,
+                "selected_child_count": self.selected_child_count,
                 "frontier_score": self.frontier_score,
                 "frontier_breakdown": self.frontier_breakdown,
                 "lookahead_candidates": self.lookahead_candidates,
@@ -141,6 +143,7 @@ class Node:
             success_rate=node_info.get("success_rate", 0.0),
             total_trajs=node_info.get("total_trajs", 0),
             successful_trajs=node_info.get("successful_trajs", 0),
+            selected_child_count=node_info.get("selected_child_count", 0),
             frontier_score=node_info.get("frontier_score", 0.0),
             frontier_breakdown=node_info.get("frontier_breakdown", None),
             lookahead_candidates=node_info.get("lookahead_candidates", None),
@@ -159,6 +162,7 @@ class Node:
                 "success_rate": self.success_rate,
                 "total_trajs": self.total_trajs,
                 "successful_trajs": self.successful_trajs,
+                "selected_child_count": self.selected_child_count,
                 "frontier_score": self.frontier_score,
                 "frontier_breakdown": self.frontier_breakdown,
                 "lookahead_candidates": self.lookahead_candidates,
@@ -254,7 +258,7 @@ class Node:
         self.prefixes.append(prefix)
 
     def record_trajectory_outcome(self, success: bool):
-        """Record a trajectory outcome and update success_rate and exploration_count."""
+        """Frontier scoring addition: update SR statistics after each trajectory."""
         self.total_trajs += 1
         if success:
             self.successful_trajs += 1

@@ -43,14 +43,16 @@ frontier_theta: 0.0
 Khi exploration chạy, log sẽ hiển thị dòng như thế này:
 
 ```
-Frontier scoring: selected 'https://...' with score=1.5234 (U=0.8712, V=0.4311, V_sr=0.8000, V_sr_source=ancestor:https://..., D=0.5000)
+Frontier scoring: selected 'https://...' with score=1.5234 (U=0.8712, V=0.4311, V_sr=0.8000, V_sr_source=parent:https://..., V_n=3, V_n_source=parent:https://..., D=0.5000)
 ```
 
 Giải thích:
-- `U=0.8712` → Uncertainty cao, node này có nhiều task với success rate phân hóa mạnh (đáng khám phá)
-- `V=0.4311` → Value trung bình, node có success rate vừa phải
-- `V_sr=0.8000` → success rate estimate được dùng trong `V`
-- `V_sr_source=ancestor:https://...` → node mới đang kế thừa success rate từ ancestor gần nhất có dữ liệu. Giá trị có thể là `self`, `ancestor:<url>`, hoặc `prior`
+- `U=0.8712` → Uncertainty cao, lookahead confidence phân hóa mạnh (đáng khám phá)
+- `V=0.4311` → Value trung bình, parent có success rate vừa phải hoặc nhánh child đã được khai thác nhiều
+- `V_sr=0.8000` → success rate của parent được dùng trong `V`
+- `V_sr_source=parent:https://...` → `V` đang dùng success rate từ parent trực tiếp. Giá trị có thể là `parent:<url>`, `parent_prior:<url>`, `self`, hoặc `prior`
+- `V_n=3` → đã có 3 URL con của parent được chọn để khám phá
+- `V_n_source=parent:https://...` → `n` lấy từ `selected_child_count` của parent
 - `D=0.5000` → Diversity ở mức default (chưa có embedding)
 
 ### Cách 2: Chạy test unit
@@ -112,24 +114,21 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # Thêm node con
     node_a = graph.add_url("http://a.com", graph.root, [])
     node_b = graph.add_url("http://b.com", graph.root, [])
+    graph.add_to_explored(graph.root)
 
-    # Gán dữ liệu cho node_a: SR=0.9, n=10 → V=0.9/log(12)≈0.362
-    node_a.success_rate = 0.9
-    node_a.total_trajs = 10
-    node_a.successful_trajs = 9
-    node_a.exploration_count = 10
+    # Gán dữ liệu cho root parent: SR=0.9, n=10 → V=0.9/log(11)≈0.375
+    graph.root.success_rate = 0.9
+    graph.root.total_trajs = 10
+    graph.root.successful_trajs = 9
+    graph.root.selected_child_count = 10
 
-    # Gán dữ liệu cho node_b: chưa có trajectory riêng.
-    # Vì parent root chưa có trajectory, node_b fallback prior SR=0.5
-    # → V=0.5/log(2)≈0.721
-    node_b.success_rate = 0.5
-    node_b.total_trajs = 0
+    # Vì node_a và node_b có cùng parent root, chúng có cùng V.
+    assert graph.scorer.value(node_a) == graph.scorer.value(node_b)
 
-    # Với beta=2.0: S_a = 2*0.362 = 0.724, S_b = 2*0.721 = 1.442
-    # → Phải chọn node_b (value cao hơn vì chưa khai thác)
+    # Khi các thành phần khác bằng nhau, thứ tự ổn định sẽ chọn node_a trước.
     chosen = graph.get_next_node()
     print(f"Chosen: {chosen.url}")
-    assert chosen.url == "http://b.com", f"Expected b.com, got {chosen.url}"
+    assert chosen.url == "http://a.com", f"Expected a.com, got {chosen.url}"
     print("✅ Graph tích hợp FrontierScorer hoạt động đúng")
 ```
 
@@ -140,7 +139,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 - [ ] **Config**: `configs/go_browse_config.yaml` đã có `frontier_alpha`, `frontier_beta`, `frontier_theta`
 - [ ] **Code**: `webexp/explore/core/scoring.py` tồn tại và import được
 - [ ] **Graph**: `webexp/explore/core/graph.py` import `FrontierScorer` và dùng `self.scorer`
-- [ ] **Node**: `webexp/explore/core/node.py` có các trường `exploration_count`, `success_rate`, `total_trajs`, `successful_trajs`, `embedding`, `parent_url`
+- [ ] **Node**: `webexp/explore/core/node.py` có các trường `exploration_count`, `selected_child_count`, `success_rate`, `total_trajs`, `successful_trajs`, `embedding`, `parent_url`
 - [ ] **Parent link**: `Graph.add_url()` gán `parent_url` và runtime `parent`; `Graph.load()` khôi phục `parent` từ `parent_url` nếu tìm thấy
 - [ ] **Recording**: `webexp/explore/algorithms/web_explore.py` gọi `node.record_trajectory_outcome()` sau mỗi trajectory
 - [ ] **Test**: `python test_scoring_manual.py` chạy không lỗi

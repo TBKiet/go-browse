@@ -26,12 +26,12 @@ class Graph:
             allowlist_patterns: Sequence[str] = tuple(), 
             denylist_patterns: Sequence[str] = tuple(), 
             resume: bool=False,
-            # Frontier scoring hyperparameters (S = αU + βV + θD)
+            # Frontier scoring addition: hyperparameters for S = alpha*U + beta*V + theta*D.
             alpha: float = 1.0,   # Weight for Uncertainty
             beta: float = 1.0,    # Weight for Value (exploitation)
             theta: float = 1.0,   # Weight for Diversity
             epsilon: float = 1e-5, # Small constant to avoid division by zero
-            # Lookahead
+            # Frontier scoring addition: optional zero-shot U prior.
             lookahead_model: Optional[str] = None,
         ):
 
@@ -41,11 +41,11 @@ class Graph:
         self.exp_dir = os.path.join(exp_dir, "graph")
         self.allowlist_patterns = allowlist_patterns
         self.denylist_patterns = denylist_patterns
-        # Frontier scorer
+        # Frontier scoring addition: replaces origin FIFO frontier selection.
         self.scorer = FrontierScorer(
             alpha=alpha, beta=beta, theta=theta, epsilon=epsilon,
         )
-        # Lookahead predictor (lazy-init, only when lookahead_model is set)
+        # Frontier scoring addition: lazy-init predictor for U.
         self._lookahead_predictor = None
         self._lookahead_model = lookahead_model
 
@@ -72,6 +72,7 @@ class Graph:
             return self.nodes[url]
         
         node_exp_dir = os.path.join(self.exp_dir, f"node_{len(self.nodes)}")
+        # Frontier scoring addition: keep parent links so sibling URLs share V.
         parent_url = parent.url if parent else None
         node = Node(
             url, {}, {}, [], "", prefixes, False, node_exp_dir,
@@ -85,7 +86,7 @@ class Graph:
         self.nodes[url] = node
         self.unexplored_nodes.append(node)
 
-        # --- Zero-shot lookahead: score this node before any agent runs ---
+        # Frontier scoring addition: collect lookahead confidences for U.
         self._run_lookahead(node)
 
         return node
@@ -135,10 +136,16 @@ class Graph:
             logger.warning(f"Lookahead failed for '{node.url[:80]}': {e}")
     
     def add_to_explored(self, node: Node):
+        was_unexplored = node in self.unexplored_nodes
         if node not in self.explored_nodes:
             self.explored_nodes.append(node)
         if node in self.unexplored_nodes:
             self.unexplored_nodes.remove(node)
+        parent = getattr(node, "parent", None)
+        if was_unexplored and parent is not None:
+            # Frontier scoring addition: n for child V is counted on the parent.
+            parent.selected_child_count = max(getattr(parent, "selected_child_count", 0), 0) + 1
+            parent.update_save(save_prefix=False)
         node.visited = True
         node.update_save(save_prefix=False)
         logger.info(f"Node {node.url} has been explored.")
@@ -148,7 +155,7 @@ class Graph:
             logger.info("No nodes left to explore.")
             return None
 
-        # Score all unexplored nodes via FrontierScorer and pick the best one
+        # Frontier scoring addition: rank frontier nodes instead of origin FIFO.
         scored_nodes = [
             (node, self.scorer.compute(node))
             for node in self.unexplored_nodes
@@ -161,15 +168,16 @@ class Graph:
             f"Frontier scoring: selected '{best_node.url[:80]}' with score={best_score:.4f} "
             f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, "
             f"V_sr={breakdown['V_sr']:.4f}, V_sr_source={breakdown['V_sr_source']}, "
+            f"V_n={breakdown['V_n']}, V_n_source={breakdown['V_n_source']}, "
             f"D={breakdown['D']:.4f})"
         )
 
-        # Save frontier score/breakdown on the selected node
+        # Frontier scoring addition: persist selected score for debugging/resume analysis.
         best_node.frontier_score = best_score
         best_node.frontier_breakdown = breakdown
         best_node.update_save(save_prefix=False, save_info=True)
 
-        # Save a frontier snapshot for ALL unexplored nodes (for analysis/debugging)
+        # Frontier scoring addition: persist full ranking for analysis/debugging.
         self._save_frontier_snapshot(scored_nodes)
 
         return best_node
@@ -191,8 +199,11 @@ class Graph:
                 "V": round(bd["V"], 6),
                 "V_sr": round(bd["V_sr"], 6),
                 "V_sr_source": bd["V_sr_source"],
+                "V_n": bd["V_n"],
+                "V_n_source": bd["V_n_source"],
                 "D": round(bd["D"], 6),
                 "exploration_count": node.exploration_count,
+                "selected_child_count": node.selected_child_count,
                 "success_rate": node.success_rate,
                 "total_trajs": node.total_trajs,
                 "num_tasks": len(node.tasks),
@@ -252,7 +263,7 @@ class Graph:
         with open(os.path.join(path, "graph_info.json"), "r") as f:
             graph_info = json.load(f)
         
-        # Restore scorer from saved parameters (or use defaults)
+        # Frontier scoring addition: restore saved scorer weights when resuming.
         scoring_dict = graph_info.get("frontier_scoring", {})
         restored = FrontierScorer.from_dict(scoring_dict)
         graph = Graph(
@@ -269,8 +280,15 @@ class Graph:
         graph.exp_dir = path
         graph._lookahead_model = lookahead_model
         for node in graph.nodes.values():
+            # Frontier scoring addition: restore runtime parent links from parent_url.
             parent_url = getattr(node, "parent_url", None)
             node.parent = graph.nodes.get(parent_url) if parent_url else None
+            node.selected_child_count = 0
+        for node in graph.nodes.values():
+            if getattr(node, "parent", None) is not None and node.visited:
+                # Frontier scoring addition: rebuild parent n from visited children.
+                parent = node.parent
+                parent.selected_child_count = max(getattr(parent, "selected_child_count", 0), 0) + 1
 
         logger.info(f"Loaded graph with {len(nodes)} nodes, {len(explored_nodes)} explored nodes, and {len(unexplored_nodes)} unexplored nodes.")
         
