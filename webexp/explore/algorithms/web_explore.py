@@ -306,7 +306,11 @@ def sample_task_candidates_for_node(
             agent=explorer,
             evaluator=evaluator,
             graph=graph,
-            max_steps=max_steps
+            max_steps=max_steps,
+            callback_context={
+                "graph_discovery_source": "task_candidate_sampling",
+                "max_graph_discovery_step": 1,
+            },
         )
 
         node.add_exploration_traj(traj)
@@ -371,7 +375,11 @@ def filter_to_feasible_tasks_for_node(
                     evaluator=evaluator,
                     graph=graph,
                     max_steps=max_steps,
-                    callback_context={"task_misc": task.misc}  # Pass task misc to the callback context
+                    callback_context={
+                        "task_misc": task.misc,
+                        "graph_discovery_source": "feasibility_check",
+                        "max_graph_discovery_step": 1,
+                    }
                 )
 
                 trajs.append(traj)
@@ -428,7 +436,11 @@ def sample_task_solving_trajectories_for_node(
                     evaluator=evaluator,
                     graph=graph,
                     max_steps=max_steps,
-                    callback_context={"task_misc": task.misc}
+                    callback_context={
+                        "task_misc": task.misc,
+                        "graph_discovery_source": "prefixed_solver",
+                        "max_graph_discovery_step": 1,
+                    }
                 )
 
                 traj.misc["needs_prefix"] = True
@@ -457,7 +469,11 @@ def sample_task_solving_trajectories_for_node(
                     evaluator=evaluator,
                     graph=graph,
                     max_steps=max_steps,
-                    callback_context={**task.misc}
+                    callback_context={
+                        **task.misc,
+                        "graph_discovery_source": "unprefixed_solver",
+                        "discover_graph_urls": False,
+                    }
                 )
 
                 traj.misc["needs_prefix"] = False
@@ -477,6 +493,18 @@ def process_open_urls_callback(
     """
     Callback to process the open urls after each step.
     """
+    if callback_context.get("discover_graph_urls", True) is False:
+        return step_num, obs, reward, terminated, truncated, env_info, goal, callback_context
+
+    max_discovery_step = callback_context.get("max_graph_discovery_step")
+    if max_discovery_step is not None and step_num > max_discovery_step:
+        logger.debug(
+            "Skipping graph URL discovery after step %s for source=%s.",
+            step_num,
+            callback_context.get("graph_discovery_source", "unknown"),
+        )
+        return step_num, obs, reward, terminated, truncated, env_info, goal, callback_context
+
     open_urls = obs['open_pages_urls']
 
     for url in open_urls:

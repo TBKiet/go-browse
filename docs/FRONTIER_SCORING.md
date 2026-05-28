@@ -575,6 +575,22 @@ Gọi cập nhật outcome sau mỗi trajectory hoặc feasibility check:
 node.record_trajectory_outcome(success)
 ```
 
+Để graph giữ ý nghĩa frontier theo chiều sâu, callback thêm URL mới vào graph chỉ chạy ở bước đầu của mỗi episode/task:
+
+```python
+callback_context={
+    "max_graph_discovery_step": 1,
+}
+```
+
+Các bước sâu hơn dùng để thực thi/refine task vẫn nằm trong trajectory/prefix, nhưng không sinh node mới. Riêng solver chạy từ root không prefix tắt hẳn graph discovery bằng:
+
+```python
+callback_context={
+    "discover_graph_urls": False,
+}
+```
+
 Nếu dùng lookahead, cần có bước tạo candidate khi node được thêm vào frontier hoặc trước khi scoring:
 
 ```python
