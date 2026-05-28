@@ -11,10 +11,9 @@ Where:
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, List, Optional, Sequence
+from typing import TYPE_CHECKING, List
 import math
 import logging
-import re
 from textwrap import dedent
 from openai import OpenAI
 import os
@@ -31,9 +30,9 @@ logger = logging.getLogger(__name__)
 
 class LookaheadPredictor:
     """Zero-shot lookahead: uses a small/cheap LLM to propose plausible
-    interaction actions on a page *before* any agent runs.
+    exploration tasks on a page *before* any agent runs.
 
-    Each candidate has an action description and a confidence score (0-1).
+    Each candidate has a task description, type, and confidence score (0-1).
     The *variance* of these confidence scores becomes the Uncertainty (U)
     component of the frontier score.
 
@@ -45,7 +44,7 @@ class LookaheadPredictor:
         self,
         model_name: str = "deepseek-chat",
         max_tokens: int = 256,
-        num_candidates: int = 5,
+        num_candidates: int = 6,
     ):
         self.client = OpenAI(
             api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -56,26 +55,41 @@ class LookaheadPredictor:
         self.num_candidates = num_candidates
 
     def propose(self, axtree_snippet: str) -> list[dict]:
-        """Propose {num_candidates} likely user interaction actions with
-        confidence scores, based on the page's accessibility tree.
+        """Propose {num_candidates} useful frontier exploration tasks with
+        feasibility confidence scores, based on the page's accessibility tree.
 
         Returns:
-            list[dict]: Each dict has keys "action" (str) and "confidence" (float).
+            list[dict]: Each dict has keys "task" (str), "type" (str),
+            and "confidence" (float).
         """
         prompt = dedent(f"""\
-            You are looking at a web page's accessibility tree (first 3500 chars below).
-            Propose the {self.num_candidates} most likely actions a user would take on this page.
+            You are evaluating a web page state for autonomous web exploration.
 
-            For each action, provide a confidence score (0.0 = very unlikely, 1.0 = almost certain)
-            that this action is feasible and makes sense on this page.
+            Given the accessibility tree below, propose {self.num_candidates} diverse candidate tasks
+            that an agent could attempt from this exact page state.
+
+            Each task should be:
+            - local to the current page state, or a direct navigation action visible from this page
+            - concrete and executable
+            - useful for discovering website functionality or new states
+            - not dependent on hidden information
+
+            For each task, provide:
+            - "task": a short natural-language goal
+            - "type": one of ["local", "navigation", "search", "form", "unknown"]
+            - "confidence": a number from 0.0 to 1.0 estimating how likely the task is feasible from this page state
+
+            Use confidence as FEASIBILITY confidence, not user-intent probability.
 
             Page accessibility tree:
             {axtree_snippet[:3500]}
 
-            Respond with ONLY a JSON array. No explanation, no markdown.
-            Example:
-            [{{"action": "Search for a product in the search bar", "confidence": 0.95}},
-             {{"action": "Click on a category link in the navigation menu", "confidence": 0.70}}]
+            Respond with ONLY valid JSON in this exact format:
+            {{
+              "candidates": [
+                {{"task": "...", "type": "local", "confidence": 0.80}}
+              ]
+            }}
             """)
 
         try:
@@ -102,10 +116,15 @@ class LookaheadPredictor:
             # Validate and cap
             results = []
             for item in data[:self.num_candidates]:
-                if isinstance(item, dict) and "action" in item:
+                if isinstance(item, dict) and ("task" in item or "action" in item):
                     conf = float(item.get("confidence", 0.5))
+                    task = str(item.get("task") or item.get("action"))
+                    task_type = str(item.get("type", "unknown"))
+                    if task_type not in {"local", "navigation", "search", "form", "unknown"}:
+                        task_type = "unknown"
                     results.append({
-                        "action": str(item["action"]),
+                        "task": task,
+                        "type": task_type,
                         "confidence": max(0.0, min(1.0, conf)),
                     })
             if results:
@@ -118,7 +137,7 @@ class LookaheadPredictor:
     def _fallback(self) -> list[dict]:
         """Return neutral candidates when prediction fails."""
         return [
-            {"action": f"generic_interaction_{i}", "confidence": 0.5}
+            {"task": f"generic_interaction_{i}", "type": "unknown", "confidence": 0.5}
             for i in range(self.num_candidates)
         ]
 
@@ -166,7 +185,7 @@ class FrontierScorer:
         U = self.uncertainty(node)
         V_sr, V_sr_source = self._estimate_parent_success_rate_with_source(node)
         V_n, V_n_source = self._parent_selected_child_count_with_source(node)
-        V = self.value(node)
+        V = V_sr * (1.0 / math.log(max(V_n, 1) + 1))
         D = self.diversity(node)
         S = self.alpha * U + self.beta * V + self.theta * D
         return {
@@ -197,7 +216,7 @@ class FrontierScorer:
         ε: small constant.
 
         Data source: `node.lookahead_candidates` — a list of
-        {"action": str, "confidence": float} produced by the zero-shot
+        {"task": str, "type": str, "confidence": float} produced by the zero-shot
         LookaheadPredictor when the node first entered the frontier.
 
         Interpretation:

@@ -1,7 +1,7 @@
 from .task import Task
 from .trace import Trace
 from .trajectory import TrajectoryStep, Trajectory
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
 import logging
 import os
@@ -40,18 +40,6 @@ class Node:
     visited: bool
     exp_dir: str
     misc: dict = None
-    # Frontier scoring addition: persisted statistics used by FrontierScorer.
-    exploration_count: int = 0       # Number of trajectories sampled from this node
-    success_rate: float = 0.0        # Success rate of trajectories from this node
-    total_trajs: int = 0             # Total trajectories run from this node
-    successful_trajs: int = 0        # Successful trajectories from this node
-    selected_child_count: int = 0     # n: number of child URLs selected for exploration
-    embedding: list = None           # Cached embedding for diversity computation
-    frontier_score: float = 0.0      # Last computed composite frontier score S
-    frontier_breakdown: dict = None  # Last computed breakdown {U, V, D, alpha, beta, theta}
-    lookahead_candidates: list = None  # Zero-shot predictions: [{"task": str, "type": str, "confidence": float}, ...]
-    parent_url: str = None           # Parent URL used to restore runtime parent links
-    parent: "Node" = field(default=None, repr=False, compare=False)  # Runtime parent reference, not serialized
    
     
     def __post_init__(self):
@@ -63,16 +51,7 @@ class Node:
                 "children": self.children,
                 #"prefix_source": self.prefix_source,
                 "visited": self.visited,
-                "misc": self.misc,
-                "exploration_count": self.exploration_count,
-                "success_rate": self.success_rate,
-                "total_trajs": self.total_trajs,
-                "successful_trajs": self.successful_trajs,
-                "selected_child_count": self.selected_child_count,
-                "frontier_score": self.frontier_score,
-                "frontier_breakdown": self.frontier_breakdown,
-                "lookahead_candidates": self.lookahead_candidates,
-                "parent_url": self.parent_url,
+                "misc": self.misc
             }
             with open(os.path.join(self.exp_dir, "node_info.json"), "w") as f:
                 json.dump(node_info, f, indent=4)
@@ -95,20 +74,23 @@ class Node:
         with open(os.path.join(load_dir, "node_info.json"), "r") as f:
             node_info = json.load(f)
         
+        visited = node_info["visited"]
+        
         tasks = {}
         exploration_tasks = {}
         
-        if os.path.exists(os.path.join(load_dir, "tasks")):
-            for i in range(len(os.listdir(os.path.join(load_dir, "tasks")))):
-                task_load_dir = os.path.join(load_dir, "tasks", f"task_{i}")
-                task = Task.load(task_load_dir, load_steps=load_steps, load_images=load_images)
-                tasks[task.goal] = task
-        
-        if os.path.exists(os.path.join(load_dir, "exploration_tasks")):
-            for i in range(len(os.listdir(os.path.join(load_dir, "exploration_tasks")))):
-                task_load_dir = os.path.join(load_dir, "exploration_tasks", f"task_{i}")
-                task = Task.load(task_load_dir, load_steps=load_steps, load_images=load_images)
-                exploration_tasks[task.goal] = task
+        if visited:
+            if os.path.exists(os.path.join(load_dir, "tasks")):
+                for i in range(len(os.listdir(os.path.join(load_dir, "tasks")))):
+                    task_load_dir = os.path.join(load_dir, "tasks", f"task_{i}")
+                    task = Task.load(task_load_dir, load_steps=load_steps, load_images=load_images)
+                    tasks[task.goal] = task
+            
+            if os.path.exists(os.path.join(load_dir, "exploration_tasks")):
+                for i in range(len(os.listdir(os.path.join(load_dir, "exploration_tasks")))):
+                    task_load_dir = os.path.join(load_dir, "exploration_tasks", f"task_{i}")
+                    task = Task.load(task_load_dir, load_steps=load_steps, load_images=load_images)
+                    exploration_tasks[task.goal] = task
             
         prefixes = []
         if load_prefix:
@@ -136,16 +118,7 @@ class Node:
             prefixes,
             node_info["visited"],
             load_dir,
-            misc=node_info.get("misc", None),
-            exploration_count=node_info.get("exploration_count", 0),
-            success_rate=node_info.get("success_rate", 0.0),
-            total_trajs=node_info.get("total_trajs", 0),
-            successful_trajs=node_info.get("successful_trajs", 0),
-            selected_child_count=node_info.get("selected_child_count", 0),
-            frontier_score=node_info.get("frontier_score", 0.0),
-            frontier_breakdown=node_info.get("frontier_breakdown", None),
-            lookahead_candidates=node_info.get("lookahead_candidates", None),
-            parent_url=node_info.get("parent_url", None),
+            misc=node_info.get("misc", None) 
         )
         
     def update_save(self, save_prefix=False, save_info=True):
@@ -155,16 +128,7 @@ class Node:
                 "description": self.description,
                 "children": self.children,
                 "visited": self.visited,
-                "misc": self.misc,
-                "exploration_count": self.exploration_count,
-                "success_rate": self.success_rate,
-                "total_trajs": self.total_trajs,
-                "successful_trajs": self.successful_trajs,
-                "selected_child_count": self.selected_child_count,
-                "frontier_score": self.frontier_score,
-                "frontier_breakdown": self.frontier_breakdown,
-                "lookahead_candidates": self.lookahead_candidates,
-                "parent_url": self.parent_url,
+                "misc": self.misc
             }
             with open(os.path.join(self.exp_dir, "node_info.json"), "w") as f:
                 json.dump(node_info, f, indent=4)
@@ -254,11 +218,3 @@ class Node:
         os.makedirs(trace_save_dir)
         prefix.save(trace_save_dir)
         self.prefixes.append(prefix)
-
-    def record_trajectory_outcome(self, success: bool):
-        """Frontier scoring addition: update SR statistics after each trajectory."""
-        self.total_trajs += 1
-        if success:
-            self.successful_trajs += 1
-        self.success_rate = self.successful_trajs / max(self.total_trajs, 1)
-        self.exploration_count += 1

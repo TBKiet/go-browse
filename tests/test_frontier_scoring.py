@@ -72,15 +72,15 @@ class TestUncertainty:
     def test_one_task_one_traj(self):
         """1 task, 1 positive → SR=1.0 → mu=1.0, sigma=0 → U=0"""
         scorer = FrontierScorer()
-        node = _make_node(lookahead_candidates=[{"action": "a", "confidence": 1.0}])
+        node = _make_node(lookahead_candidates=[{"task": "a", "type": "local", "confidence": 1.0}])
         assert scorer.uncertainty(node) == 0.0
 
     def test_two_tasks_split(self):
         """2 tasks: SR=1.0, SR=0.0 → mu=0.5, sigma=0.25 → U=0.5"""
         scorer = FrontierScorer()
         node = _make_node(lookahead_candidates=[
-            {"action": "a", "confidence": 1.0},
-            {"action": "b", "confidence": 0.0},
+            {"task": "a", "type": "local", "confidence": 1.0},
+            {"task": "b", "type": "navigation", "confidence": 0.0},
         ])
         assert abs(scorer.uncertainty(node) - 0.5) < 0.01
 
@@ -88,8 +88,8 @@ class TestUncertainty:
         """2 tasks both SR=0.5 → sigma=0 → U=0"""
         scorer = FrontierScorer()
         node = _make_node(lookahead_candidates=[
-            {"action": "a", "confidence": 0.5},
-            {"action": "b", "confidence": 0.5},
+            {"task": "a", "type": "local", "confidence": 0.5},
+            {"task": "b", "type": "form", "confidence": 0.5},
         ])
         assert scorer.uncertainty(node) == 0.0
 
@@ -97,9 +97,9 @@ class TestUncertainty:
         """3 tasks: SR=1.0, 0.5, 0.0 → mu=0.5, sigma=0.1667, U≈0.333"""
         scorer = FrontierScorer()
         node = _make_node(lookahead_candidates=[
-            {"action": "a", "confidence": 1.0},
-            {"action": "b", "confidence": 0.5},
-            {"action": "c", "confidence": 0.0},
+            {"task": "a", "type": "local", "confidence": 1.0},
+            {"task": "b", "type": "search", "confidence": 0.5},
+            {"task": "c", "type": "unknown", "confidence": 0.0},
         ])
         U = scorer.uncertainty(node)
         assert abs(U - 0.333) < 0.01, f"Expected ~0.333, got {U}"

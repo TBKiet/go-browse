@@ -10,7 +10,7 @@ $$
 
 Trong đó:
 
-- `U` — **Uncertainty**: độ bất định ước lượng từ các action candidate do `LookaheadPredictor` dự đoán.
+- `U` — **Uncertainty**: độ bất định ước lượng từ các exploration task candidate do `LookaheadPredictor` dự đoán.
 - `V` — **Value**: giá trị khai thác dựa trên success rate của các trajectory đã chạy từ node.
 - `D` — **Diversity**: độ đa dạng UI/DOM dựa trên khoảng cách cosine giữa các embedding trạng thái liên tiếp.
 
@@ -26,7 +26,7 @@ Node có score cao nhất sẽ được chọn để explore trước.
 
 Khi một URL mới được phát hiện và thêm vào frontier, node đó có thể chưa có trajectory, chưa có success rate và chưa có embedding.
 
-Nếu có accessibility tree snippet, hệ thống có thể dùng `LookaheadPredictor` để dự đoán trước một số action khả thi trên trang:
+Nếu có accessibility tree snippet, hệ thống có thể dùng `LookaheadPredictor` để dự đoán trước một số task khả thi trên trang:
 
 ```python
 node.lookahead_candidates = lookahead_predictor.propose(axtree_snippet)
@@ -36,7 +36,8 @@ Mỗi candidate có dạng:
 
 ```python
 {
-    "action": "Search for a product in the search bar",
+    "task": "Search for a product in the search bar",
+    "type": "search",
     "confidence": 0.95,
 }
 ```
@@ -59,21 +60,22 @@ S = self.alpha * U + self.beta * V + self.theta * D
 Graph sẽ sort các node chưa explore theo score giảm dần:
 
 ```python
-scored_nodes = [(node, self.scorer.compute(node))
+scored_nodes = [(node, self.scorer.breakdown(node))
                 for node in self.unexplored_nodes]
-scored_nodes.sort(key=lambda x: x[1], reverse=True)
-best_node, best_score = scored_nodes[0]
+scored_nodes.sort(key=lambda x: x[1]["score"], reverse=True)
+best_node, breakdown = scored_nodes[0]
+best_score = breakdown["score"]
 ```
 
 Node `best_node` sẽ được lấy ra để chạy vòng explore tiếp theo.
 
 ---
 
-## 2. `LookaheadPredictor` — dự đoán action trước khi explore thật
+## 2. `LookaheadPredictor` — dự đoán task trước khi explore thật
 
 ### Mục đích
 
-`LookaheadPredictor` là một predictor nhẹ, dùng LLM rẻ để nhìn vào accessibility tree của trang và đề xuất một số action mà người dùng có thể thực hiện.
+`LookaheadPredictor` là một predictor nhẹ, dùng LLM rẻ để nhìn vào accessibility tree của trang và đề xuất một số task mà agent có thể thử từ state hiện tại.
 
 Mục tiêu của nó là tạo dữ liệu prior cho node mới, trước khi tốn chi phí chạy PageExplorer/NavExplorer hoặc solver thật.
 
@@ -99,9 +101,9 @@ Ví dụ:
 
 ```python
 [
-    {"action": "Search for a product in the search bar", "confidence": 0.95},
-    {"action": "Click on a category link", "confidence": 0.70},
-    {"action": "Open the shopping cart", "confidence": 0.40},
+    {"task": "Search for a product in the search bar", "type": "search", "confidence": 0.95},
+    {"task": "Open a visible category link", "type": "navigation", "confidence": 0.70},
+    {"task": "Open the shopping cart", "type": "navigation", "confidence": 0.40},
 ]
 ```
 
@@ -111,8 +113,8 @@ Nếu LLM call lỗi, parse JSON lỗi, hoặc output không đúng format, pred
 
 ```python
 [
-    {"action": "generic_interaction_0", "confidence": 0.5},
-    {"action": "generic_interaction_1", "confidence": 0.5},
+    {"task": "generic_interaction_0", "type": "unknown", "confidence": 0.5},
+    {"task": "generic_interaction_1", "type": "unknown", "confidence": 0.5},
     ...
 ]
 ```
@@ -132,7 +134,7 @@ Vì vậy model có thể trả về object dạng:
 ```python
 {
     "candidates": [
-        {"action": "...", "confidence": 0.9}
+        {"task": "...", "type": "local", "confidence": 0.9}
     ]
 }
 ```
@@ -221,8 +223,8 @@ def uncertainty(self, node: Node) -> float:
 Nói cách khác:
 
 ```text
-U cao  → các action candidate có confidence phân hóa mạnh.
-U thấp → các action candidate có confidence gần giống nhau.
+U cao  → các task candidate có confidence phân hóa mạnh.
+U thấp → các task candidate có confidence gần giống nhau.
 ```
 
 Ví dụ:
@@ -253,7 +255,7 @@ U = 1.0
 
 Trong tài liệu cũ, `U` được mô tả là variance của success rate giữa các task. Điều đó **không khớp với code hiện tại**. Theo code hiện tại, `U` phải được hiểu là:
 
-> Độ bất định ước lượng trước exploration, tính từ variance của confidence score trong các action candidate do `LookaheadPredictor` sinh ra.
+> Độ bất định ước lượng trước exploration, tính từ variance của confidence score trong các task candidate do `LookaheadPredictor` sinh ra.
 
 ---
 
@@ -506,7 +508,7 @@ Theo logic hiện tại, node cần có các trường sau để scoring hoạt 
 
 | Trường | Kiểu | Mục đích |
 |---|---|---|
-| `lookahead_candidates` | `list[dict]` | Danh sách action candidate và confidence do `LookaheadPredictor` sinh ra |
+| `lookahead_candidates` | `list[dict]` | Danh sách task candidate, type và confidence do `LookaheadPredictor` sinh ra |
 | `exploration_count` | `int` | Số lần node đã được explore/lấy mẫu |
 | `selected_child_count` | `int` | Số URL con của node này đã được chọn để khám phá; dùng làm `n` cho `V` của các child |
 | `success_rate` | `float` | Tỷ lệ trajectory thành công từ node |
@@ -545,11 +547,11 @@ Khi chọn node tiếp theo:
 
 ```python
 def get_next_node(self):
-    scored_nodes = [(node, self.scorer.compute(node))
+    scored_nodes = [(node, self.scorer.breakdown(node))
                     for node in self.unexplored_nodes]
-    scored_nodes.sort(key=lambda x: x[1], reverse=True)
-    best_node, best_score = scored_nodes[0]
-    breakdown = self.scorer.breakdown(best_node)
+    scored_nodes.sort(key=lambda x: x[1]["score"], reverse=True)
+    best_node, breakdown = scored_nodes[0]
+    best_score = breakdown["score"]
     logger.info(
         f"Selected '{best_node.url}' score={best_score:.4f} "
         f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, D={breakdown['D']:.4f})"
@@ -662,7 +664,7 @@ frontier_beta: 0.5
 frontier_theta: 0.5
 ```
 
-Dùng khi muốn ưu tiên node có action candidate phân hóa mạnh, tức là page có vẻ còn nhiều điều chưa chắc chắn.
+Dùng khi muốn ưu tiên node có task candidate phân hóa mạnh, tức là page có vẻ còn nhiều điều chưa chắc chắn.
 
 ### Ưu tiên exploitation
 

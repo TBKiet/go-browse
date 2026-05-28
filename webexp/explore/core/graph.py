@@ -156,14 +156,15 @@ class Graph:
             return None
 
         # Frontier scoring addition: rank frontier nodes instead of origin FIFO.
+        # Compute each breakdown once and reuse it for sorting, logging, and snapshots.
         scored_nodes = [
-            (node, self.scorer.compute(node))
+            (node, self.scorer.breakdown(node))
             for node in self.unexplored_nodes
         ]
-        scored_nodes.sort(key=lambda x: x[1], reverse=True)
+        scored_nodes.sort(key=lambda x: x[1]["score"], reverse=True)
 
-        best_node, best_score = scored_nodes[0]
-        breakdown = self.scorer.breakdown(best_node)
+        best_node, breakdown = scored_nodes[0]
+        best_score = breakdown["score"]
         logger.info(
             f"Frontier scoring: selected '{best_node.url[:80]}' with score={best_score:.4f} "
             f"(U={breakdown['U']:.4f}, V={breakdown['V']:.4f}, "
@@ -185,8 +186,7 @@ class Graph:
     def _save_frontier_snapshot(self, scored_nodes: list):
         """Save a snapshot of the current frontier ranking to the graph directory."""
         snapshot = []
-        for node, score in scored_nodes:
-            bd = self.scorer.breakdown(node)
+        for node, bd in scored_nodes:
             lookahead_confs = (
                 [c["confidence"] for c in node.lookahead_candidates]
                 if node.lookahead_candidates else None
@@ -194,7 +194,7 @@ class Graph:
             snapshot.append({
                 "url": node.url[:120],
                 "parent_url": getattr(node, "parent_url", None),
-                "score": round(score, 6),
+                "score": round(bd["score"], 6),
                 "U": round(bd["U"], 6),
                 "V": round(bd["V"], 6),
                 "V_sr": round(bd["V_sr"], 6),
